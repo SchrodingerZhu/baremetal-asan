@@ -1,7 +1,12 @@
-//! Stubs for compiler-emitted stack ABI calls.
+//! Compiler-emitted stack ABI calls.
 //!
-//! Fake-stack allocation returns zero to select the real stack. Other hooks
-//! leave shadow memory untouched. Direct compiler-emitted shadow writes remain.
+//! No-return cleanup clears the current stack's shadow when `__stack` is defined.
+//! Fake-stack allocation returns zero to select the real stack. The remaining
+//! hooks are stubs; direct compiler-emitted shadow writes remain.
+
+use core::ptr;
+
+use crate::access::{RAM_OFFSET, RAM_SIZE, RAM_START, addr_to_shadow_unchecked};
 
 /// Disable runtime-selectable stack-use-after-return detection by default.
 #[unsafe(no_mangle)]
@@ -78,4 +83,44 @@ pub extern "C" fn __asan_alloca_poison(_addr: usize, _size: usize) {}
 pub extern "C" fn __asan_allocas_unpoison(_top: usize, _bottom: usize) {}
 
 #[unsafe(no_mangle)]
-pub extern "C" fn __asan_handle_no_return() {}
+#[inline(never)]
+pub extern "C" fn __asan_handle_no_return() {
+    let top: usize;
+    // Resolve the weak symbol in assembly so Rust cannot assume its address is
+    // nonnull. An undefined ELF weak symbol resolves to zero.
+    unsafe {
+        #[cfg(target_arch = "arm")]
+        core::arch::asm!(
+            ".weak __stack",
+            "ldr {top}, =__stack",
+            top = out(reg) top,
+            options(nostack, readonly, preserves_flags),
+        );
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!(
+            ".weak __stack",
+            "mov {top}, qword ptr [rip + __stack@GOTPCREL]",
+            top = out(reg) top,
+            options(nostack, readonly, preserves_flags),
+        );
+    }
+    if top == 0 {
+        return;
+    }
+
+    // A local in this frame lies below the caller's frame on a downward-growing
+    // stack. Keep this hook outlined so the marker belongs to our own frame.
+    let marker = 0u8;
+    let bottom = (ptr::addr_of!(marker) as usize).max(RAM_START + RAM_OFFSET);
+    // The linker symbol denotes the stack's exclusive upper bound.
+    let top = top.min(RAM_START + RAM_SIZE);
+    if bottom >= top {
+        return;
+    }
+
+    let shadow_start = addr_to_shadow_unchecked(bottom);
+    let shadow_size = addr_to_shadow_unchecked(top - 1) - shadow_start + 1;
+    // SAFETY: the clipped range maps into reserved shadow RAM. Use raw writes:
+    // cleanup mutates shadow and must not construct a shared shadow slice.
+    unsafe { ptr::write_bytes(shadow_start as *mut u8, 0, shadow_size) };
+}

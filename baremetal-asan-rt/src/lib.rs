@@ -3,6 +3,7 @@
 mod abi;
 mod diagnostic;
 mod global;
+mod memory;
 mod stack;
 mod access;
 

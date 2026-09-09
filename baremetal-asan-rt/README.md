@@ -29,6 +29,12 @@ Startup must initialize shadow RAM before instrumented code runs. The prototype
 RAM/shadow mapping in `src/access.rs` must match the device. Release builds use
 `opt-level = "s"` and ThinLTO from the workspace manifest.
 
+The memory wrappers check their ranges before copying or filling bytes.
+`__asan_handle_no_return` clears stack poisoning from its current frame up to the
+optional weak linker symbol `__stack`, assuming one downward-growing stack.
+If `__stack` is undefined or zero, cleanup is skipped. Otherwise it is clipped
+to the configured application SRAM.
+
 Run the host mapping, boundary, and poisoning tests with:
 
 ```sh

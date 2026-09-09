@@ -60,7 +60,7 @@ pub fn slice_to_shadow_slice_fixed<const SIZE: usize, const SHADOW_SIZE: usize>(
 
 /// Map an address already known to be within application SRAM.
 #[inline(always)]
-fn addr_to_shadow_unchecked(addr: usize) -> usize {
+pub(crate) fn addr_to_shadow_unchecked(addr: usize) -> usize {
     RAM_START + (addr - RAM_START) / ASAN_QUANTUM
 }
 
@@ -134,12 +134,18 @@ access_checkers! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn __asan_loadN(addr: usize, size: usize) {
-    check_access(addr, size, false, slice_to_shadow_slice(addr, size));
+    check_range(addr, size, false);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn __asan_storeN(addr: usize, size: usize) {
-    check_access(addr, size, true, slice_to_shadow_slice(addr, size));
+    check_range(addr, size, true);
+}
+
+/// Check a runtime-sized range for either the ABI or other runtime modules.
+#[inline]
+pub(crate) fn check_range(addr: usize, size: usize, is_write: bool) {
+    check_access(addr, size, is_write, slice_to_shadow_slice(addr, size));
 }
 
 #[cfg(test)]
