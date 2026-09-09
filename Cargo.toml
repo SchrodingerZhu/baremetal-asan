@@ -7,3 +7,5 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+lto = "thin"
+opt-level = "s"
