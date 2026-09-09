@@ -30,6 +30,7 @@
 
 # Nested build directory
 /build*
+/target/
 
 #==============================================================================#
 # Explicit files to ignore (only matches one).

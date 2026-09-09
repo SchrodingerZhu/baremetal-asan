@@ -68,7 +68,7 @@
         shellHook = ''
           unset CPLUS_INCLUDE_PATH C_INCLUDE_PATH CPATH
           unset RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER
-          export PATH=${llvm.libcxxStdenv.cc}/bin:${llvm.bintools}/bin:${llvm.llvm}/bin:$PATH
+          export PATH=${rustToolchain}/bin:${llvm.libcxxStdenv.cc}/bin:${llvm.bintools}/bin:${llvm.llvm}/bin:$PATH
           export CC=${llvm.libcxxStdenv.cc}/bin/clang
           export CXX=${llvm.libcxxStdenv.cc}/bin/clang++
           export CMAKE_C_COMPILER_LAUNCHER=

@@ -1,0 +1,17 @@
+[package]
+name = "baremetal-asan-rt"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+embassy-sync = "=0.8.0"
+
+[target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
+semihosting = { version = "0.1", features = ["stdio", "panic-handler"] }
+
+[profile.release]
+lto = "thin"
+opt-level = "s"
