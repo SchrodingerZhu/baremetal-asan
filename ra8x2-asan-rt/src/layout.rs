@@ -1,14 +1,14 @@
 //! RA8M2 memory layouts for the RA8x2 target runtime.
 //!
 //! ```text
-//! Application address     Logical shadow address       Physical shadow byte
-//!         |                        |                           |
-//!         +-- (addr >> scale) -----+-- split across regions ----+
-//!             + SHADOW_OFFSET
-//!
 //! Eight-byte granules, at the DTCM/SRAM split:
-//!   0x220f_fff8  ------>  0x2001_ffff  ------>  0x2001_ffff (DTCM)
-//!   0x2210_0000  ------>  0x2002_0000  ------>  0x2218_c000 (SRAM)
+//!
+//! ┌─────────────────────────┐   ┌─────────────────────────┐   ┌─────────────────────────┐
+//! │   Application address   │   │  Logical shadow address │   │ Physical shadow address │
+//! ├─────────────────────────┤   ├─────────────────────────┤   ├─────────────────────────┤
+//! │       0x220f_fff8       │──▶│       0x2001_ffff       │──▶│    0x2001_ffff (DTCM)   │
+//! │       0x2210_0000       │──▶│       0x2002_0000       │──▶│    0x2218_c000 (SRAM)   │
+//! └─────────────────────────┘   └─────────────────────────┘   └─────────────────────────┘
 //! ```
 //!
 //! Outlined access checks receive application addresses; LLVM's shadow setters

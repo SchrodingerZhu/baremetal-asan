@@ -1,15 +1,48 @@
 //! Mapping application memory to logical and physical shadow ranges.
 //!
-//! Outlined checks take application addresses; shadow setters take the logical
-//! address `(application >> SHADOW_SCALE) + SHADOW_OFFSET`. A layout maps these
-//! onto borrowed slices, each contained in one physical backing region.
+//! - **Application address**: the address of the program byte being checked.
+//!   Each `GRANULE`-byte application block is described by one shadow byte.
+//! - **Logical shadow address**: LLVM's linear mapping
+//!   `(addr >> SHADOW_SCALE) + SHADOW_OFFSET`. It starts at `SHADOW_BASE` for
+//!   `APPLICATION.start` and advances by one per granule. This address need not
+//!   refer to accessible RAM; it identifies a byte in the logical shadow space.
+//! - **Physical shadow address**: the actual RAM address holding that shadow byte.
+//!   The layout places consecutive logical shadow bytes in one or more backing
+//!   regions, which may be separated by address gaps.
+//!
+//! ```text
+//! ┌─────────────────────────┐   ┌─────────────────────────┐   ┌─────────────────────────┐
+//! │   Application address   │──▶│  Logical shadow address │──▶│ Physical shadow address │
+//! └─────────────────────────┘   └─────────────────────────┘   └─────────────────────────┘
+//!
+//! Logical   ┌───────────────┬───────────────┐
+//!           │  first part   │  second part  │
+//!           └───────┬───────┴───────┬───────┘
+//!                   │               └─────────────┐
+//!                   ▼                             ▼
+//! Physical  ┌───────────────┐             ┌───────────────┐
+//!           │   region A    │ address gap │   region B    │
+//!           └───────────────┘             └───────────────┘
+//! ```
+//!
+//! Outlined access checks receive application addresses and use `to_slices` to
+//! borrow the corresponding physical shadow. Each slice stays within one region.
+//! Shadow setters instead receive logical shadow addresses and shadow-byte counts.
+//! `set_shadow` subtracts `SHADOW_BASE`, recovers the application granules, and
+//! uses `to_slices_mut` to fill their physical shadow pieces.
+//!
+//! The default layout mapping makes logical and physical shadow addresses equal.
+//! When they differ, LLVM's shadow operations must be outlined so the runtime can
+//! perform the translation; a direct LLVM shadow access would bypass it.
 
 use core::{ops::Range, slice};
 
 /// A piece of shadow and the application bytes it describes.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Shadow<T> {
+    /// Application bytes described by this piece of shadow.
     pub memory: Range<usize>,
+    /// The physical shadow address range or borrowed shadow bytes.
     pub bytes: T,
 }
 
@@ -24,7 +57,7 @@ pub trait Layout: Sized {
 
     const GRANULE: usize = 1 << Self::SHADOW_SCALE;
     const SHADOW_SIZE: usize = (Self::APPLICATION.end - Self::APPLICATION.start) / Self::GRANULE;
-    /// LLVM's linear shadow address is a logical address, translated by setters.
+    /// Logical shadow address corresponding to `APPLICATION.start`.
     const SHADOW_BASE: usize;
     /// LLVM adds this offset with pointer-width wrapping arithmetic.
     const SHADOW_OFFSET: usize =

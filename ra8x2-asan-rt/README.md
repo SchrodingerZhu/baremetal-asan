@@ -2,7 +2,7 @@
 
 This `no_std` static library instantiates `baremetal-asan-rt` with an RA8M2 memory
 layout. It owns semihosting and its panic handler, plus the optional weak
-`__stack` lookup. `src/layout.rs` contains all device addresses and the ASCII
+`__stack` lookup. `src/layout.rs` contains all device addresses and the
 application-to-logical-to-physical shadow diagram.
 
 | Feature | Layout | Application SRAM (exclusive end) | Physical shadow |
