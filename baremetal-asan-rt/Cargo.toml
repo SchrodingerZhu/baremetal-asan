@@ -6,6 +6,9 @@ edition = "2024"
 [lib]
 crate-type = ["staticlib"]
 
+[features]
+mve = []
+
 [dependencies]
 embassy-sync = "=0.8.0"
 

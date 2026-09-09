@@ -11,6 +11,11 @@ pub(super) trait ShadowScan {
 impl ShadowScan for &[i8] {
     #[inline(always)]
     fn find_invalid_shadow_byte(self, first: usize, last: usize) -> Option<usize> {
+        #[cfg(all(feature = "mve", target_arch = "arm", target_os = "none"))]
+        if self.len() >= 16 && !mve::in_handler() {
+            return mve::find_invalid_shadow_byte(self, first, last);
+        }
+
         let base = first - first % ASAN_QUANTUM;
         self.iter().enumerate().find_map(|(index, &value)| {
             let granule = base + index * ASAN_QUANTUM;
@@ -60,5 +65,89 @@ fn poisoned_in_granule(shadow: i8, granule: usize, first: usize, last: usize) ->
         Some(first.max(granule + shadow as usize))
     } else {
         None
+    }
+}
+
+#[cfg(all(feature = "mve", target_arch = "arm", target_os = "none"))]
+mod mve {
+    //! Exact MVE slice scan, outlined so handlers never enter vector code under LTO.
+
+    use core::arch::asm;
+
+    #[inline(always)]
+    pub(super) fn in_handler() -> bool {
+        let ipsr: u32;
+        // Reading IPSR uses a core register and cannot trigger lazy FP preservation.
+        unsafe { asm!("mrs {}, IPSR", out(reg) ipsr, options(nomem, nostack, preserves_flags)) };
+        ipsr != 0
+    }
+
+    /// Scan the shadow of a validated, nonempty application-SRAM range.
+    /// Startup must enable MVE and set FPSCR.LEN to 0b100 (no tail-predicated loop).
+    #[inline(never)]
+    pub(super) fn find_invalid_shadow_byte(
+        shadow: &[i8],
+        first: usize,
+        last: usize,
+    ) -> Option<usize> {
+        let invalid: usize;
+        // SAFETY: the slice covers exactly first..=last. Predicated loads zero
+        // inactive lanes without reading outside it. Only a selected active lane
+        // is reread to recover its poison value. All vector clobbers are declared;
+        // VPR is preserved explicitly because Rust has no VPR clobber operand.
+        unsafe {
+            asm!(
+                "vmrs {saved}, vpr",
+                "vmov.i8 q1, #8",
+                "2:",
+                "vctp.8 {remaining}",
+                "vpst",
+                "vldrbt.u8 q0, [{shadow}]",
+                // A granule contains poison iff its signed shadow is nonzero and
+                // below 8. VPT + VCMPT intersects those predicates in P0.
+                "vpt.i8 ne, q0, zr",
+                "vcmpt.s8 lt, q0, q1",
+                "vmrs {invalid}, p0",
+                "cmp {invalid}, #0",
+                "bne 3f",
+                "subs {remaining}, {remaining}, #16",
+                "bls 4f",
+                "adds {shadow}, {shadow}, #16",
+                "adds {base}, {base}, #128",
+                "b 2b",
+                "3:",
+                // P0 has one bit per byte. CTZ locates the first poisoned granule;
+                // negative shadow starts poison at offset 0, positive at its value.
+                "rbit {invalid}, {invalid}",
+                "clz {invalid}, {invalid}",
+                "ldrsb {value}, [{shadow}, {invalid}]",
+                "cmp {value}, #0",
+                "it lt",
+                "movlt {value}, #0",
+                "add {base}, {base}, {invalid}, lsl #3",
+                "add {invalid}, {base}, {value}",
+                "cmp {invalid}, {first}",
+                "csel {invalid}, {invalid}, {first}, hs",
+                // Poison beyond the last accessed byte is a valid partial tail.
+                "cmp {invalid}, {last}",
+                "it hi",
+                "movhi {invalid}, #0",
+                "4:",
+                "vmsr vpr, {saved}",
+                shadow = inout(reg) shadow.as_ptr() => _,
+                remaining = inout(reg) shadow.len() => _,
+                base = inout(reg) first & !7 => _,
+                first = in(reg) first,
+                last = in(reg) last,
+                invalid = out(reg) invalid,
+                value = out(reg) _,
+                saved = out(reg) _,
+                out("q0") _,
+                out("q1") _,
+                options(nostack, readonly),
+            );
+        }
+        // Application SRAM never includes address zero.
+        if invalid == 0 { None } else { Some(invalid) }
     }
 }
