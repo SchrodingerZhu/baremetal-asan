@@ -1,151 +1,120 @@
-//! Outlined access checks for application SRAM; other address ranges are ignored.
+//! Outlined checks for application memory described by a layout.
 
-use crate::diagnostic::report_access;
+use crate::{diagnostic::report_access, layout::Layout};
 use scan::ShadowScan;
 
 mod scan;
 
-// Assume RA8x2 without security mode for now, 2MiB total SRAM
-// Lower 0x04_0000 bytes are allocated for shadow
-pub const RAM_START: usize = 0x2000_0000;
-pub const RAM_OFFSET: usize = 0x0004_0000;
-pub const RAM_SIZE: usize = 0x0020_0000;
-pub const ASAN_QUANTUM: usize = 1 << 3;
-
-/// Only application SRAM is sanitized by this prototype.
-pub fn check_in_range(addr: usize) -> bool {
-    (RAM_START + RAM_OFFSET..RAM_START + RAM_SIZE).contains(&addr)
-}
-
-/// Map an SRAM address to one shadow byte per `ASAN_QUANTUM` bytes.
-pub fn addr_to_shadow(addr: usize) -> Option<usize> {
-    if !check_in_range(addr) {
-        return None;
+/// `SIZE` is the fixed ABI access size, or zero for a runtime-sized access.
+#[inline(always)]
+unsafe fn check_access<L: Layout, const SIZE: usize>(addr: usize, size: usize, is_write: bool) {
+    if size != 0 && addr.checked_add(size - 1).is_none() {
+        report_access(addr, size, is_write, addr);
     }
-    Some(addr_to_shadow_unchecked(addr))
-}
-
-/// Return the shadow bytes covering the application-SRAM portion of an access.
-/// Includes partially covered granules; empty, wrapping, or non-overlapping
-/// ranges return `None`.
-///
-/// Shadow RAM must be initialized and remain unchanged while the slice is in use.
-#[inline(always)]
-pub fn slice_to_shadow_slice(addr: usize, size: usize) -> Option<&'static [i8]> {
-    let last = addr
-        .checked_add(size.checked_sub(1)?)?
-        .min(RAM_START + RAM_SIZE - 1);
-    let first = addr.max(RAM_START + RAM_OFFSET);
-    if first > last {
-        return None;
-    }
-
-    let shadow_start = addr_to_shadow_unchecked(first);
-    let shadow_len = addr_to_shadow_unchecked(last) - shadow_start + 1;
-    // SAFETY: The clipped range maps entirely into reserved shadow RAM, and
-    // its length fits in isize. The runtime must keep this RAM initialized
-    // and unmodified while the returned slice is borrowed.
-    Some(unsafe { core::slice::from_raw_parts(shadow_start as *const i8, shadow_len) })
-}
-
-/// Borrow the shadow of a fixed-size access as an array without copying.
-/// Returns `None` unless the mapped shadow has exactly `SHADOW_SIZE` bytes.
-/// The same range and shadow-RAM requirements as `slice_to_shadow_slice` apply.
-#[inline(always)]
-pub fn slice_to_shadow_slice_fixed<const SIZE: usize, const SHADOW_SIZE: usize>(
-    addr: usize,
-) -> Option<&'static [i8; SHADOW_SIZE]> {
-    slice_to_shadow_slice(addr, SIZE)?.try_into().ok()
-}
-
-/// Map an address already known to be within application SRAM.
-#[inline(always)]
-pub(crate) fn addr_to_shadow_unchecked(addr: usize) -> usize {
-    RAM_START + (addr - RAM_START) / ASAN_QUANTUM
-}
-
-#[inline(always)]
-fn check_access<Shadow: ShadowScan>(
-    addr: usize,
-    size: usize,
-    is_write: bool,
-    shadow: Option<Shadow>,
-) {
-    let Some(shadow) = shadow else {
-        // A wrapping range is invalid; empty and non-SRAM accesses are ignored.
-        if size != 0 && addr.checked_add(size - 1).is_none() {
-            report_access(addr, size, is_write, addr);
+    // SAFETY: startup initializes the layout's shadow RAM. Shadow must remain
+    // unchanged while the check borrows it; each slice stays in one RAM region.
+    let invalid = unsafe { L::to_slices(addr, size) }.find_map(|part| {
+        let first = part.memory.start;
+        let last = part.memory.end - 1;
+        if SIZE != 0 && SIZE <= 2 * L::GRANULE {
+            // Fixed ABI accesses cover at most three shadow bytes. Borrow arrays
+            // so their scan remains straight-line even under -Os, including when
+            // an access is split between two backing regions.
+            if SIZE == 1 || part.bytes.len() == 1 {
+                part.bytes
+                    .first_chunk::<1>()
+                    .unwrap()
+                    .find_invalid_shadow_byte::<L>(first, last)
+            } else if SIZE <= L::GRANULE || part.bytes.len() == 2 {
+                part.bytes
+                    .first_chunk::<2>()
+                    .unwrap()
+                    .find_invalid_shadow_byte::<L>(first, last)
+            } else {
+                part.bytes
+                    .first_chunk::<3>()
+                    .unwrap()
+                    .find_invalid_shadow_byte::<L>(first, last)
+            }
+        } else {
+            part.bytes.find_invalid_shadow_byte::<L>(first, last)
         }
-        return;
-    };
-    // Slice construction already validated the range and ruled out overflow.
-    let first = addr.max(RAM_START + RAM_OFFSET);
-    let last = (addr + (size - 1)).min(RAM_START + RAM_SIZE - 1);
-    if let Some(invalid) = shadow.find_invalid_shadow_byte(first, last) {
+    });
+    if let Some(invalid) = invalid {
         report_access(addr, size, is_write, invalid);
     }
 }
 
-/// Select the exact array length for a 1/2/4/8/16-byte access, including
-/// unaligned accesses and accesses clipped at the SRAM boundaries.
+/// Check a fixed-size access using the selected layout.
+///
+/// # Safety
+/// Shadow RAM must be initialized and readable, without concurrent mutation
+/// during this check, as required by `Layout::to_slices`.
 #[inline(always)]
-fn check_access_fixed<const SIZE: usize>(addr: usize, is_write: bool) {
-    let one = slice_to_shadow_slice_fixed::<SIZE, 1>(addr);
-    if SIZE == 1 || one.is_some() {
-        check_access(addr, SIZE, is_write, one);
-        return;
-    }
-    let two = slice_to_shadow_slice_fixed::<SIZE, 2>(addr);
-    if SIZE <= ASAN_QUANTUM || two.is_some() {
-        check_access(addr, SIZE, is_write, two);
-        return;
-    }
-    check_access(
-        addr,
-        SIZE,
-        is_write,
-        slice_to_shadow_slice_fixed::<SIZE, 3>(addr),
-    );
+pub unsafe fn check_access_fixed<L: Layout, const SIZE: usize>(addr: usize, is_write: bool) {
+    // SAFETY: the caller supplies the layout's initialized shadow RAM.
+    unsafe { check_access::<L, SIZE>(addr, SIZE, is_write) };
 }
 
-macro_rules! access_checkers {
-    ($($load:ident, $store:ident, $size:literal;)+) => {
+/// Check a runtime-sized range for either the ABI or other runtime modules.
+///
+/// # Safety
+/// The same shadow-access requirements as `check_access_fixed` apply.
+#[inline]
+pub unsafe fn check_range<L: Layout>(addr: usize, size: usize, is_write: bool) {
+    // SAFETY: the caller supplies the layout's initialized shadow RAM.
+    unsafe { check_access::<L, 0>(addr, size, is_write) };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __asan_access_checkers {
+    ($layout:ty; $($load:ident, $store:ident, $size:literal;)+) => {
         $(
+            /// # Safety
+            /// The target must initialize shadow RAM and prevent conflicting access.
             #[unsafe(no_mangle)]
-            pub extern "C" fn $load(addr: usize) {
-                check_access_fixed::<$size>(addr, false);
+            pub unsafe extern "C" fn $load(addr: usize) {
+                unsafe { $crate::access::check_access_fixed::<$layout, $size>(addr, false) };
             }
 
+            /// # Safety
+            /// The target must initialize shadow RAM and prevent conflicting access.
             #[unsafe(no_mangle)]
-            pub extern "C" fn $store(addr: usize) {
-                check_access_fixed::<$size>(addr, true);
+            pub unsafe extern "C" fn $store(addr: usize) {
+                unsafe { $crate::access::check_access_fixed::<$layout, $size>(addr, true) };
             }
         )+
     };
 }
 
-access_checkers! {
-    __asan_load1, __asan_store1, 1;
-    __asan_load2, __asan_store2, 2;
-    __asan_load4, __asan_store4, 4;
-    __asan_load8, __asan_store8, 8;
-    __asan_load16, __asan_store16, 16;
-}
+/// Export outlined load/store checks for the supplied layout.
+#[macro_export]
+macro_rules! export_asan_access {
+    ($layout:ty) => {
+        $crate::__asan_access_checkers! {
+            $layout;
+            __asan_load1, __asan_store1, 1;
+            __asan_load2, __asan_store2, 2;
+            __asan_load4, __asan_store4, 4;
+            __asan_load8, __asan_store8, 8;
+            __asan_load16, __asan_store16, 16;
+        }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn __asan_loadN(addr: usize, size: usize) {
-    check_range(addr, size, false);
-}
+        /// # Safety
+        /// The target must initialize shadow RAM and prevent conflicting access.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __asan_loadN(addr: usize, size: usize) {
+            unsafe { $crate::access::check_range::<$layout>(addr, size, false) };
+        }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn __asan_storeN(addr: usize, size: usize) {
-    check_range(addr, size, true);
-}
-
-/// Check a runtime-sized range for either the ABI or other runtime modules.
-#[inline]
-pub(crate) fn check_range(addr: usize, size: usize, is_write: bool) {
-    check_access(addr, size, is_write, slice_to_shadow_slice(addr, size));
+        /// # Safety
+        /// The target must initialize shadow RAM and prevent conflicting access.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __asan_storeN(addr: usize, size: usize) {
+            unsafe { $crate::access::check_range::<$layout>(addr, size, true) };
+        }
+    };
 }
 
 #[cfg(test)]

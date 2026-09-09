@@ -1,0 +1,18 @@
+[package]
+name = "ra8x2-asan-rt"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+
+[features]
+mve = ["baremetal-asan-rt/mve"]
+granule-16 = []
+no-dtcm = []
+
+[dependencies]
+baremetal-asan-rt = { path = "../baremetal-asan-rt" }
+
+[target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
+semihosting = { version = "0.1", features = ["stdio", "panic-handler"] }

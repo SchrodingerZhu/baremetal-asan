@@ -1,5 +1,6 @@
 [workspace]
-members = ["baremetal-asan-rt"]
+members = ["baremetal-asan-rt", "ra8x2-asan-rt"]
+default-members = ["baremetal-asan-rt"]
 resolver = "3"
 
 [profile.dev]

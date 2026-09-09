@@ -1,49 +1,59 @@
-# Bare-metal ASan runtime
+# Portable bare-metal ASan runtime
 
-Build the scalar static library for Cortex-M:
+The repository root is a Cargo workspace. `baremetal-asan-rt` is a `no_std` Rust
+library containing the generic runtime and C ABI export macros. It has no device
+layout, linker-symbol dependency, semihosting dependency, or panic handler.
+`ra8x2-asan-rt` is the target static library; see its [build and layout settings](../ra8x2-asan-rt/README.md).
 
-```sh
-cargo build -p baremetal-asan-rt --release --target thumbv8m.main-none-eabihf
+A target crate implements `layout::Layout`, supplies its stack bound, and exports
+the ABI once:
+
+```rust
+use baremetal_asan_rt::layout::Layout;
+use core::ops::Range;
+
+struct MyLayout;
+impl Layout for MyLayout {
+    const APPLICATION: Range<usize> = 0x2000_0000..0x2001_0000;
+    const SHADOW_SCALE: u32 = 3;
+    const SHADOW_BASE: usize = 0x1000_0000;
+}
+
+fn stack_top() -> usize {
+    0 // Skip no-return cleanup, or return the exclusive top of the current stack.
+}
+
+baremetal_asan_rt::export_asan!(MyLayout, stack_top = stack_top);
 ```
 
-All checks share the same poison rule and boundary handling. Fixed
-1/2/4/8/16-byte checks borrow arrays of one to three shadow bytes. `ShadowScan`
-provides separate array implementations that expand into short-circuit checks;
-variable-size accesses use the slice iterator by default. This keeps fixed scans
-unrolled at `opt-level = "s"` without copying shadow memory.
+For split shadow, override `Layout::to_ranges`; each returned `Shadow` describes
+an application range and its physical shadow range. `layout::map_region` handles
+clipping and granule rounding. The default layout implementation uses one linear
+shadow range. `to_slices` and `to_slices_mut` borrow those ranges without copying.
+Shadow setters validate a logical shadow request before filling its physical
+pieces. Target startup must reserve and initialize shadow RAM, and LLVM's mapping
+scale and offset must match the layout.
 
-Enable the exact MVE slice scan for thread mode on an MVE-capable target:
+`export_asan!` combines `export_asan_abi!`, `export_asan_globals!`,
+`export_asan_access!`, `export_asan_memory!`, and `export_asan_stack!`. The group
+macros can also be invoked individually. Merely linking this library emits no
+ASan C symbols. Generic Rust helpers are available in `access`, `memory`, and
+`stack`; their unsafe contracts cover shadow access and memory validity.
 
-```sh
-cargo rustc -p baremetal-asan-rt --release --features mve \
-  --target thumbv8m.main-none-eabihf -- -C target-cpu=cortex-m85
-```
+Fixed 1/2/4/8/16-byte checks borrow small shadow arrays and retain the expanded
+scalar scans. Variable-size checks scan slices. The optional `mve` feature enables
+the exact MVE slice scanner on bare-metal ARM; the consuming target must support
+MVE and enable it at startup. Handlers and short slices retain scalar checks.
 
-Thread-mode slices of at least 16 shadow bytes use MVE, scanning 16 bytes per
-iteration and returning the first invalid application address, including partial
-granules. Shorter slices and handlers retain the scalar iterator; fixed accesses
-retain their scalar array checks. Startup must enable CP10/CP11 access and set
-FPSCR.LEN to `0b100` before using MVE.
-
-Startup must initialize shadow RAM before instrumented code runs. The prototype
-RAM/shadow mapping in `src/access.rs` must match the device. Release builds use
-`opt-level = "s"` and ThinLTO from the workspace manifest.
-
-`__asan_set_shadow_*` fills already-mapped shadow bytes with its suffix value.
-Empty ranges and ranges not wholly inside reserved shadow RAM are ignored,
-including overflowing ranges. The helpers remain outlined under LTO. Compile
-instrumented code with `-mllvm -asan-max-inline-poisoning-size=0` to route stack
-shadow updates through these guards; LLVM still needs the matching shadow
-mapping scale and offset.
-
-The memory wrappers check their ranges before copying or filling bytes.
-`__asan_handle_no_return` clears stack poisoning from its current frame up to the
-optional weak linker symbol `__stack`, assuming one downward-growing stack.
-If `__stack` is undefined or zero, cleanup is skipped. Otherwise it is clipped
-to the configured application SRAM.
-
-Run the host mapping, boundary, and poisoning tests with:
+The existing ABI scope is unchanged: global registration, fake-stack allocation,
+and lifetime/dynamic-stack hooks remain stubs. `__asan_init` is not implemented.
+See [spec.md](spec.md) for the API list.
 
 ```sh
-cargo test -p baremetal-asan-rt
+cargo build                      # Default workspace member: the portable library.
+cargo test --workspace
+cargo test -p baremetal-asan-rt --all-features
 ```
+
+Release builds use `opt-level = "s"`, ThinLTO, and aborting panics. The consuming
+runtime supplies its own panic handler.
