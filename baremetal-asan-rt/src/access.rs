@@ -64,17 +64,6 @@ fn addr_to_shadow_unchecked(addr: usize) -> usize {
     RAM_START + (addr - RAM_START) / ASAN_QUANTUM
 }
 
-/// Find the first poisoned address in the validated SRAM range `first..=last`.
-/// `shadow` contains exactly the granules covering that range.
-#[inline(always)]
-fn first_poisoned<Shadow: ShadowScan>(first: usize, last: usize, shadow: Shadow) -> Option<usize> {
-    let base = first - first % ASAN_QUANTUM;
-    shadow.find_map(|index, value| {
-        let granule = base + index * ASAN_QUANTUM;
-        poisoned_in_granule(value, granule, first.max(granule), last)
-    })
-}
-
 #[inline(always)]
 fn check_access<Shadow: ShadowScan>(
     addr: usize,
@@ -92,7 +81,7 @@ fn check_access<Shadow: ShadowScan>(
     // Slice construction already validated the range and ruled out overflow.
     let first = addr.max(RAM_START + RAM_OFFSET);
     let last = (addr + (size - 1)).min(RAM_START + RAM_SIZE - 1);
-    if let Some(invalid) = first_poisoned(first, last, shadow) {
+    if let Some(invalid) = shadow.find_invalid_shadow_byte(first, last) {
         report_access(addr, size, is_write, invalid);
     }
 }
@@ -117,28 +106,6 @@ fn check_access_fixed<const SIZE: usize>(addr: usize, is_write: bool) {
         is_write,
         slice_to_shadow_slice_fixed::<SIZE, 3>(addr),
     );
-}
-
-/// Check `first..=last` against one shadow byte, returning the first invalid
-/// application address or `None`.
-///
-/// `granule` is the aligned start of an 8-byte application-memory block.
-/// `first` must lie inside that block; `last` is inclusive and may extend
-/// beyond it, so the check clips `last` to the block's end.
-///
-/// Shadow 0 allows the whole block; a negative value poisons it entirely.
-/// A positive value allows that many leading bytes of the block.
-#[inline(always)]
-fn poisoned_in_granule(shadow: i8, granule: usize, first: usize, last: usize) -> Option<usize> {
-    if shadow == 0 {
-        None
-    } else if shadow < 0 {
-        Some(first)
-    } else if last.min(granule + ASAN_QUANTUM - 1) >= granule + shadow as usize {
-        Some(first.max(granule + shadow as usize))
-    } else {
-        None
-    }
 }
 
 macro_rules! access_checkers {

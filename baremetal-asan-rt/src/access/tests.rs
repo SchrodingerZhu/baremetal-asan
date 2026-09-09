@@ -16,10 +16,9 @@ fn check_fixed_size<const SIZE: usize>() {
                     })
                     .map(|byte| APP_START + byte);
                 assert_eq!(
-                    first_poisoned(
+                    shadow[..(offset + SIZE).div_ceil(8)].find_invalid_shadow_byte(
                         APP_START + offset,
                         APP_START + offset + SIZE - 1,
-                        &shadow[..(offset + SIZE).div_ceil(8)],
                     ),
                     expected,
                     "size={SIZE}, shadow={shadow:?}, offset={offset}",
@@ -27,9 +26,15 @@ fn check_fixed_size<const SIZE: usize>() {
                 let first = APP_START + offset;
                 let last = first + SIZE - 1;
                 let actual = match (offset + SIZE).div_ceil(8) {
-                    1 => first_poisoned(first, last, shadow.first_chunk::<1>().unwrap()),
-                    2 => first_poisoned(first, last, shadow.first_chunk::<2>().unwrap()),
-                    3 => first_poisoned(first, last, &shadow),
+                    1 => shadow
+                        .first_chunk::<1>()
+                        .unwrap()
+                        .find_invalid_shadow_byte(first, last),
+                    2 => shadow
+                        .first_chunk::<2>()
+                        .unwrap()
+                        .find_invalid_shadow_byte(first, last),
+                    3 => shadow.find_invalid_shadow_byte(first, last),
                     _ => unreachable!(),
                 };
                 assert_eq!(
@@ -56,7 +61,7 @@ fn check_fixed_size<const SIZE: usize>() {
                 let expected = (first..=last)
                     .find(|&byte| value < 0 || (value > 0 && byte % 8 >= value as usize));
                 assert_eq!(
-                    first_poisoned(first, last, &[value; 3][..shadow_len]),
+                    [value; 3][..shadow_len].find_invalid_shadow_byte(first, last),
                     expected,
                     "size={SIZE}, addr={addr:#x}, shadow={value}",
                 );
@@ -101,11 +106,11 @@ fn matches_bytewise_checks_for_unaligned_and_partial_accesses() {
                             value < 0 || (value > 0 && byte % 8 >= value as usize)
                         })
                         .map(|byte| APP_START + byte);
-                    let actual = first_poisoned(
-                        APP_START + offset,
-                        APP_START + offset + size - 1,
-                        &shadow[offset / 8..(offset + size).div_ceil(8)],
-                    );
+                    let actual = shadow[offset / 8..(offset + size).div_ceil(8)]
+                        .find_invalid_shadow_byte(
+                            APP_START + offset,
+                            APP_START + offset + size - 1,
+                        );
                     assert_eq!(
                         actual, expected,
                         "shadow={shadow:?}, offset={offset}, size={size}"
@@ -121,7 +126,7 @@ fn finds_poison_in_the_middle_of_a_large_access() {
     let mut shadow = [0; 128];
     shadow[64] = -15;
     assert_eq!(
-        first_poisoned(APP_START, APP_START + 1023, &shadow[..]),
+        shadow[..].find_invalid_shadow_byte(APP_START, APP_START + 1023),
         Some(APP_START + 512),
     );
 }
@@ -145,24 +150,24 @@ fn skips_empty_and_non_sram_accesses_without_reading_shadow() {
 
 #[test]
 fn checks_only_the_sram_overlap_at_both_boundaries() {
-    assert_eq!(first_poisoned(APP_START, APP_START + 3, &[0]), None);
+    assert_eq!([0].find_invalid_shadow_byte(APP_START, APP_START + 3), None);
     assert_eq!(
-        first_poisoned(APP_START, APP_START + 3, &[-15]),
+        [-15].find_invalid_shadow_byte(APP_START, APP_START + 3),
         Some(APP_START)
     );
     assert_eq!(
-        first_poisoned(APP_START, APP_START + 3, &[3]),
+        [3].find_invalid_shadow_byte(APP_START, APP_START + 3),
         Some(APP_START + 3)
     );
-    assert_eq!(first_poisoned(APP_START, APP_START + 3, &[4]), None);
+    assert_eq!([4].find_invalid_shadow_byte(APP_START, APP_START + 3), None);
 
-    assert_eq!(first_poisoned(RAM_END - 4, RAM_END - 1, &[0]), None);
+    assert_eq!([0].find_invalid_shadow_byte(RAM_END - 4, RAM_END - 1), None);
     assert_eq!(
-        first_poisoned(RAM_END - 4, RAM_END - 1, &[-15]),
+        [-15].find_invalid_shadow_byte(RAM_END - 4, RAM_END - 1),
         Some(RAM_END - 4)
     );
     assert_eq!(
-        first_poisoned(RAM_END - 4, RAM_END - 1, &[7]),
+        [7].find_invalid_shadow_byte(RAM_END - 4, RAM_END - 1),
         Some(RAM_END - 1)
     );
 }
