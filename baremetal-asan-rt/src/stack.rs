@@ -1,8 +1,9 @@
 //! Compiler-emitted stack ABI calls.
 //!
 //! No-return cleanup clears the current stack's shadow when `__stack` is defined.
-//! Fake-stack allocation returns zero to select the real stack. The remaining
-//! hooks are stubs; direct compiler-emitted shadow writes remain.
+//! Shadow-fill helpers accept only ranges wholly inside reserved shadow RAM.
+//! Fake-stack allocation returns zero to select the real stack. Lifetime and
+//! dynamic-allocation hooks remain stubs.
 
 use core::ptr;
 
@@ -45,29 +46,43 @@ fake_stack_stubs! {
     __asan_stack_malloc_10, __asan_stack_malloc_always_10, __asan_stack_free_10;
 }
 
-macro_rules! shadow_stubs {
-    ($($name:ident),+ $(,)?) => {
+macro_rules! shadow_setters {
+    ($($name:ident => $value:literal),+ $(,)?) => {
         $(
+            /// Fill already-mapped shadow bytes; ignore empty or invalid ranges.
             #[unsafe(no_mangle)]
-            pub extern "C" fn $name(_addr: usize, _size: usize) {}
+            #[inline(never)]
+            pub extern "C" fn $name(addr: usize, size: usize) {
+                let shadow_end = RAM_START + RAM_OFFSET;
+                // Validate the whole range without overflowing addr + size.
+                if size == 0
+                    || !(RAM_START..shadow_end).contains(&addr)
+                    || size > shadow_end - addr
+                {
+                    return;
+                }
+                // SAFETY: startup reserves this writable shadow RAM. The range
+                // is fully contained in it; use raw writes without borrowing it.
+                unsafe { ptr::write_bytes(addr as *mut u8, $value, size) };
+            }
         )+
     };
 }
 
-shadow_stubs! {
-    __asan_set_shadow_00,
-    __asan_set_shadow_01,
-    __asan_set_shadow_02,
-    __asan_set_shadow_03,
-    __asan_set_shadow_04,
-    __asan_set_shadow_05,
-    __asan_set_shadow_06,
-    __asan_set_shadow_07,
-    __asan_set_shadow_f1,
-    __asan_set_shadow_f2,
-    __asan_set_shadow_f3,
-    __asan_set_shadow_f5,
-    __asan_set_shadow_f8,
+shadow_setters! {
+    __asan_set_shadow_00 => 0x00,
+    __asan_set_shadow_01 => 0x01,
+    __asan_set_shadow_02 => 0x02,
+    __asan_set_shadow_03 => 0x03,
+    __asan_set_shadow_04 => 0x04,
+    __asan_set_shadow_05 => 0x05,
+    __asan_set_shadow_06 => 0x06,
+    __asan_set_shadow_07 => 0x07,
+    __asan_set_shadow_f1 => 0xf1,
+    __asan_set_shadow_f2 => 0xf2,
+    __asan_set_shadow_f3 => 0xf3,
+    __asan_set_shadow_f5 => 0xf5,
+    __asan_set_shadow_f8 => 0xf8,
 }
 
 #[unsafe(no_mangle)]

@@ -29,6 +29,13 @@ Startup must initialize shadow RAM before instrumented code runs. The prototype
 RAM/shadow mapping in `src/access.rs` must match the device. Release builds use
 `opt-level = "s"` and ThinLTO from the workspace manifest.
 
+`__asan_set_shadow_*` fills already-mapped shadow bytes with its suffix value.
+Empty ranges and ranges not wholly inside reserved shadow RAM are ignored,
+including overflowing ranges. The helpers remain outlined under LTO. Compile
+instrumented code with `-mllvm -asan-max-inline-poisoning-size=0` to route stack
+shadow updates through these guards; LLVM still needs the matching shadow
+mapping scale and offset.
+
 The memory wrappers check their ranges before copying or filling bytes.
 `__asan_handle_no_return` clears stack poisoning from its current frame up to the
 optional weak linker symbol `__stack`, assuming one downward-growing stack.
