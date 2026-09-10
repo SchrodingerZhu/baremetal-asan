@@ -1,4 +1,4 @@
-//! Mapping application memory to logical and physical shadow ranges.
+//! Platform memory: application, shadow, stack bounds, and allocation source.
 //!
 //! - **Application address**: the address of the program byte being checked.
 //!   Each `GRANULE`-byte application block is described by one shadow byte.
@@ -7,7 +7,7 @@
 //!   `APPLICATION.start` and advances by one per granule. This address need not
 //!   refer to accessible RAM; it identifies a byte in the logical shadow space.
 //! - **Physical shadow address**: the actual RAM address holding that shadow byte.
-//!   The layout places consecutive logical shadow bytes in one or more backing
+//!   The platform places consecutive logical shadow bytes in one or more backing
 //!   regions, which may be separated by address gaps.
 //!
 //! ```text
@@ -31,7 +31,7 @@
 //! `set_shadow` subtracts `SHADOW_BASE`, recovers the application granules, and
 //! uses `to_slices_mut` to fill their physical shadow pieces.
 //!
-//! The default layout mapping makes logical and physical shadow addresses equal.
+//! The default platform mapping makes logical and physical shadow addresses equal.
 //! When they differ, LLVM's shadow operations must be outlined so the runtime can
 //! perform the translation; a direct LLVM shadow access would bypass it.
 
@@ -46,12 +46,12 @@ pub struct Shadow<T> {
     pub bytes: T,
 }
 
-/// A contiguous application range whose shadow is stored across RAM regions.
+/// Runtime memory configuration and target hooks.
 ///
 /// Application and region bounds must be granule-aligned. Regions must cover the
 /// application range in order, without overlaps or holes. Each shadow range must be
 /// nonempty, disjoint from the others, and sized for its application region.
-pub trait Layout: Sized {
+pub trait Platform: Sized {
     const APPLICATION: Range<usize>;
     const SHADOW_SCALE: u32;
 
@@ -62,6 +62,27 @@ pub trait Layout: Sized {
     /// LLVM adds this offset with pointer-width wrapping arithmetic.
     const SHADOW_OFFSET: usize =
         Self::SHADOW_BASE.wrapping_sub(Self::APPLICATION.start >> Self::SHADOW_SCALE);
+
+    /// Exclusive top of the current downward-growing stack; zero skips cleanup.
+    #[inline(always)]
+    fn stack_top() -> usize {
+        0
+    }
+
+    /// Base application address of the arena reserved for heap and fake-stack
+    /// allocations. Its `alloc_size()` bytes must be writable, within APPLICATION,
+    /// and disjoint from program data, the real stack, and physical shadow.
+    #[inline(always)]
+    fn alloc_base() -> usize {
+        0
+    }
+
+    /// Allocation arena size in bytes; zero means no allocation source.
+    /// The base and size must remain fixed while the runtime uses the arena.
+    #[inline(always)]
+    fn alloc_size() -> usize {
+        0
+    }
 
     /// Split an application access into ranges backed by individual shadow regions.
     /// Empty, wrapping, and unsupported ranges yield no pieces; overlaps are clipped.
@@ -75,7 +96,7 @@ pub trait Layout: Sized {
     /// Borrow shadow in region-sized pieces without copying bytes.
     ///
     /// # Safety
-    /// The layout must describe initialized, readable shadow RAM that remains
+    /// The platform must describe initialized, readable shadow RAM that remains
     /// unmodified while any returned slice is borrowed.
     #[inline(always)]
     unsafe fn to_slices(addr: usize, size: usize) -> impl Iterator<Item = Shadow<&'static [i8]>> {
@@ -91,7 +112,7 @@ pub trait Layout: Sized {
     /// Mutably borrow shadow in region-sized pieces without copying bytes.
     ///
     /// # Safety
-    /// The layout must describe initialized, writable shadow RAM. Each returned
+    /// The platform must describe initialized, writable shadow RAM. Each returned
     /// slice must have exclusive access to its bytes for the duration of its borrow.
     #[inline(always)]
     unsafe fn to_slices_mut(
@@ -129,7 +150,7 @@ pub trait Layout: Sized {
 
 /// Clip an access to one application region and map its covering granules.
 #[inline(always)]
-pub fn map_region<L: Layout>(
+pub fn map_region<P: Platform>(
     addr: usize,
     last: Option<usize>,
     memory: Range<usize>,
@@ -139,7 +160,7 @@ pub fn map_region<L: Layout>(
     let last = last?.min(memory.end - 1);
     (first <= last).then(|| Shadow {
         memory: first..last + 1,
-        bytes: shadow + (first - memory.start) / L::GRANULE
-            ..shadow + (last - memory.start) / L::GRANULE + 1,
+        bytes: shadow + (first - memory.start) / P::GRANULE
+            ..shadow + (last - memory.start) / P::GRANULE + 1,
     })
 }

@@ -1,16 +1,16 @@
 //! Generic stack cleanup and macros for compiler-emitted stack ABI calls.
 
-use crate::layout::Layout;
+use crate::platform::Platform;
 use core::ptr;
 
-/// Clear stack shadow through the exclusive upper bound `top`; zero disables it.
-/// The caller supplies the stack bound so this module needs no target assembly.
+/// Clear stack shadow through `Platform::stack_top()`; zero disables cleanup.
 ///
 /// # Safety
 /// The current stack grows downward toward this function's frame. Its shadow
 /// must be initialized and exclusively accessible during cleanup.
 #[inline(never)]
-pub unsafe fn handle_no_return<L: Layout>(top: usize) {
+pub unsafe fn handle_no_return<P: Platform>() {
+    let top = P::stack_top();
     if top == 0 {
         return;
     }
@@ -25,8 +25,8 @@ pub unsafe fn handle_no_return<L: Layout>(top: usize) {
     }
 
     // SAFETY: cleanup has exclusive access to the current stack's initialized
-    // shadow. The layout clips the range and splits it into backing RAM regions.
-    unsafe { L::to_slices_mut(bottom, top - bottom) }.for_each(|part| part.bytes.fill(0));
+    // shadow. The platform clips the range and splits it into backing RAM regions.
+    unsafe { P::to_slices_mut(bottom, top - bottom) }.for_each(|part| part.bytes.fill(0));
 }
 
 #[doc(hidden)]
@@ -53,7 +53,7 @@ macro_rules! __asan_fake_stack_stubs {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __asan_shadow_setters {
-    ($layout:ty; $($name:ident => $value:literal),+ $(,)?) => {
+    ($platform:ty; $($name:ident => $value:literal),+ $(,)?) => {
         $(
             /// Fill logical shadow bytes; ignore empty or invalid ranges.
             ///
@@ -62,9 +62,9 @@ macro_rules! __asan_shadow_setters {
             #[unsafe(no_mangle)]
             #[inline(never)]
             pub unsafe extern "C" fn $name(addr: usize, size: usize) {
-                // SAFETY: startup initializes and reserves the layout's shadow
+                // SAFETY: startup initializes and reserves the platform's shadow
                 // RAM; shadow updates require exclusive access to these bytes.
-                unsafe { <$layout as $crate::layout::Layout>::set_shadow(addr, size, $value as u8 as i8) };
+                unsafe { <$platform as $crate::platform::Platform>::set_shadow(addr, size, $value as u8 as i8) };
             }
         )+
     };
@@ -73,7 +73,7 @@ macro_rules! __asan_shadow_setters {
 /// Export stack setters, no-return cleanup, and the current fake-stack stubs.
 #[macro_export]
 macro_rules! export_asan_stack {
-    ($layout:ty, stack_top = $stack_top:path $(,)?) => {
+    ($platform:ty $(,)?) => {
         /// Runtime-selectable stack-use-after-return detection is disabled.
         #[unsafe(no_mangle)]
         pub static mut __asan_option_detect_stack_use_after_return: ::core::ffi::c_int = 0;
@@ -93,7 +93,7 @@ macro_rules! export_asan_stack {
         }
 
         $crate::__asan_shadow_setters! {
-            $layout;
+            $platform;
             __asan_set_shadow_00 => 0x00,
             __asan_set_shadow_01 => 0x01,
             __asan_set_shadow_02 => 0x02,
@@ -126,7 +126,7 @@ macro_rules! export_asan_stack {
         #[unsafe(no_mangle)]
         #[inline(never)]
         pub unsafe extern "C" fn __asan_handle_no_return() {
-            unsafe { $crate::stack::handle_no_return::<$layout>($stack_top()) };
+            unsafe { $crate::stack::handle_no_return::<$platform>() };
         }
     };
 }

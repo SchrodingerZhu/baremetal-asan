@@ -1,20 +1,20 @@
-use crate::layout::Layout;
+use crate::platform::Platform;
 use core::ops::Range;
 
-pub struct TestLayout<const SCALE: u32>;
-impl<const SCALE: u32> Layout for TestLayout<SCALE> {
+pub struct TestPlatform<const SCALE: u32>;
+impl<const SCALE: u32> Platform for TestPlatform<SCALE> {
     const APPLICATION: Range<usize> = 0x0010_0000..0x0020_0000;
     const SHADOW_SCALE: u32 = SCALE;
     const SHADOW_BASE: usize = 0x0030_0000;
 }
 
-pub type Granule8 = TestLayout<3>;
-pub type Granule16 = TestLayout<4>;
+pub type Granule8 = TestPlatform<3>;
+pub type Granule16 = TestPlatform<4>;
 
 #[test]
 fn logical_mapping_supports_shadow_below_shifted_application_addresses() {
     struct LowShadow;
-    impl Layout for LowShadow {
+    impl Platform for LowShadow {
         const APPLICATION: Range<usize> = 0x8000_0000..0x8001_0000;
         const SHADOW_SCALE: u32 = 3;
         const SHADOW_BASE: usize = 0x2000;

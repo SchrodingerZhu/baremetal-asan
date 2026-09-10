@@ -1,7 +1,7 @@
 extern crate std;
 
 use super::*;
-use crate::layout::{Shadow, map_region};
+use crate::platform::{Shadow, map_region};
 use core::ops::Range;
 use std::{format, string::String, vec::Vec};
 
@@ -11,7 +11,7 @@ static LEFT: [i8; 9] = [-15; 9];
 static RIGHT: [i8; 26] = [-13; 26];
 
 struct Split<const SCALE: u32>;
-impl<const SCALE: u32> Layout for Split<SCALE> {
+impl<const SCALE: u32> Platform for Split<SCALE> {
     const APPLICATION: Range<usize> = 0x1000..0x1000 + 35 * Self::GRANULE;
     const SHADOW_SCALE: u32 = SCALE;
     const SHADOW_BASE: usize = 0;
@@ -35,9 +35,9 @@ impl<const SCALE: u32> Layout for Split<SCALE> {
     }
 }
 
-fn dump<L: Layout>(addr: usize) -> String {
-    // Only used with immutable Split backing or addresses outside a layout.
-    format!("{}", ShadowDump::<L>(addr, PhantomData))
+fn dump<P: Platform>(addr: usize) -> String {
+    // Only used with immutable Split backing or addresses outside a platform.
+    format!("{}", ShadowDump::<P>(addr, PhantomData))
 }
 
 #[test]
@@ -52,9 +52,9 @@ fn colors_and_marks_the_correct_byte_across_a_split_row() {
     );
 }
 
-fn check_bounds<L: Layout>() {
-    for addr in [L::APPLICATION.start, L::APPLICATION.end - 1] {
-        let text = dump::<L>(addr);
+fn check_bounds<P: Platform>() {
+    for addr in [P::APPLICATION.start, P::APPLICATION.end - 1] {
+        let text = dump::<P>(addr);
         let rows: Vec<_> = text
             .lines()
             .filter(|line| line.starts_with("  0x") || line.starts_with("=>"))
@@ -79,7 +79,7 @@ fn clips_both_application_boundaries_for_both_granules() {
 
 #[test]
 fn unsupported_addresses_do_not_read_unmapped_shadow() {
-    use crate::test_layout::Granule8;
+    use crate::test_platform::Granule8;
     for addr in [
         0,
         Granule8::APPLICATION.start - 1,

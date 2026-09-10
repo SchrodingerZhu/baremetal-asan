@@ -1,21 +1,21 @@
 # RA8x2 ASan runtime
 
-This `no_std` static library instantiates `baremetal-asan-rt` with an RA8M2 memory
-layout. It owns semihosting and its panic handler, plus the optional weak
-`__stack` lookup. `src/layout.rs` contains all device addresses and the
-application-to-logical-to-physical shadow diagram.
+This `no_std` static library instantiates `baremetal-asan-rt` with an RA8M2
+platform. It owns semihosting and its panic handler, plus optional weak linker
+symbols for stack and allocation bounds. `src/platform.rs` contains all device
+addresses and the application-to-logical-to-physical shadow diagram.
 
-| Feature | Layout | Application SRAM (exclusive end) | Physical shadow |
+| Feature | Platform | Application SRAM (exclusive end) | Physical shadow |
 | --- | --- | --- | --- |
 | Default | `Ra8m2Granule8` | `0x2200_0000..0x2218_c000` (1584 KiB) | 128 KiB at `0x2000_0000`, then 70 KiB at `0x2218_c000` |
 | `granule-16` | `Ra8m2Granule16` | `0x2200_0000..0x221a_0000` (1664 KiB) | 104 KiB at `0x2000_0000` |
 | `no-dtcm` | `Ra8m2Granule8Sram` | `0x2200_0000..0x2217_0000` (1472 KiB) | 184 KiB at `0x2217_0000`; DTCM is unused |
 
-The default layout reserves the last 80 KiB of main SRAM; `no-dtcm` reserves the
+The default platform reserves the last 80 KiB of main SRAM; `no-dtcm` reserves the
 last 192 KiB. The linker must exclude these reservations from application
 allocations. Initialize all used shadow bytes before instrumented code runs.
 These standalone layouts do not sanitize application data in TCM, and firmware
-with other RAM reservations needs a matching layout and linker script.
+with other RAM reservations needs a matching platform and linker script.
 
 Build the target archive (`target/thumbv8m.main-none-eabihf/release/libra8x2_asan_rt.a`):
 
@@ -25,7 +25,7 @@ cargo build -p ra8x2-asan-rt --release --target thumbv8m.main-none-eabihf --feat
 cargo build -p ra8x2-asan-rt --release --target thumbv8m.main-none-eabihf --features no-dtcm
 ```
 
-`granule-16` and `no-dtcm` are mutually exclusive. Any layout can additionally use
+`granule-16` and `no-dtcm` are mutually exclusive. Any platform can additionally use
 `mve` on Cortex-M85:
 
 ```sh
@@ -55,13 +55,28 @@ Also supply the mapping options matching the runtime:
 | `no-dtcm` | `3` | `0x1dd70000` |
 
 Inline shadow accesses bypass translation and cannot be used with the split
-layout. LLVM has no outlined setters for partial-shadow values 8–15: at scale 4,
+platform. LLVM has no outlined setters for partial-shadow values 8–15: at scale 4,
 those writes remain inline even with the poisoning threshold set to zero. They
 address the correct DTCM bytes but bypass the setters' range guards. The
-`no-dtcm` layout also has identical logical and physical shadow addresses.
+`no-dtcm` platform also has identical logical and physical shadow addresses.
 
 `__asan_handle_no_return` clears the current downward-growing stack's shadow up
 to the optional weak `__stack` symbol. An undefined or zero symbol skips cleanup.
+
+`Platform::alloc_base()` and `alloc_size()` read the values of the weak linker
+symbols `__asan_alloc_base` and `__asan_alloc_size`. The base is an application
+address and the size is a byte count. Undefined symbols return zero. To reserve
+an allocation arena after static data and below a 16 KiB stack, a linker script
+can define:
+
+```ld
+__asan_alloc_base = ALIGN(__bss_end, 16);
+__asan_alloc_size = (__stack - 16K) - __asan_alloc_base;
+ASSERT(__asan_alloc_base <= __stack - 16K, "allocation arena overlaps stack")
+```
+
+The linker must keep other sections out of this arena. These hooks describe the
+memory source only; heap and fake-stack allocation are not implemented yet.
 
 ```sh
 cargo test --workspace

@@ -1,27 +1,27 @@
 //! Scanning borrowed shadow slices and fixed arrays without copying them.
 
-use crate::layout::Layout;
+use crate::platform::Platform;
 
 pub(super) trait ShadowScan {
     /// Return the first invalid application address in `first..=last`.
     /// The shadow contains exactly the granules covering this validated range.
-    fn find_invalid_shadow_byte<L: Layout>(self, first: usize, last: usize) -> Option<usize>;
+    fn find_invalid_shadow_byte<P: Platform>(self, first: usize, last: usize) -> Option<usize>;
 }
 
 impl ShadowScan for &[i8] {
     #[inline(always)]
-    fn find_invalid_shadow_byte<L: Layout>(self, first: usize, last: usize) -> Option<usize> {
+    fn find_invalid_shadow_byte<P: Platform>(self, first: usize, last: usize) -> Option<usize> {
         #[cfg(all(feature = "mve", target_arch = "arm", target_os = "none"))]
         // MVE uses zero as its success sentinel and compares signed shadow bytes
         // against the granule size. Other layouts retain the scalar scan.
-        if L::APPLICATION.start != 0 && L::GRANULE < 128 && self.len() >= 16 && !mve::in_handler() {
-            return mve::find_invalid_shadow_byte::<L>(self, first, last);
+        if P::APPLICATION.start != 0 && P::GRANULE < 128 && self.len() >= 16 && !mve::in_handler() {
+            return mve::find_invalid_shadow_byte::<P>(self, first, last);
         }
 
-        let base = first - first % L::GRANULE;
+        let base = first - first % P::GRANULE;
         self.iter().enumerate().find_map(|(index, &value)| {
-            let granule = base + index * L::GRANULE;
-            poisoned_in_granule::<L>(value, granule, first.max(granule), last)
+            let granule = base + index * P::GRANULE;
+            poisoned_in_granule::<P>(value, granule, first.max(granule), last)
         })
     }
 }
@@ -33,11 +33,11 @@ macro_rules! fixed_shadow_scan {
     ($size:literal; $($index:literal),+) => {
         impl ShadowScan for &[i8; $size] {
             #[inline(always)]
-            fn find_invalid_shadow_byte<L: Layout>(self, first: usize, last: usize) -> Option<usize> {
-                let base = first - first % L::GRANULE;
+            fn find_invalid_shadow_byte<P: Platform>(self, first: usize, last: usize) -> Option<usize> {
+                let base = first - first % P::GRANULE;
                 None$(.or_else(|| {
-                    let granule = base + $index * L::GRANULE;
-                    poisoned_in_granule::<L>(self[$index], granule, first.max(granule), last)
+                    let granule = base + $index * P::GRANULE;
+                    poisoned_in_granule::<P>(self[$index], granule, first.max(granule), last)
                 }))+
             }
         }
@@ -51,14 +51,14 @@ fixed_shadow_scan!(3; 0, 1, 2);
 /// Check `first..=last` against one shadow byte, returning the first invalid
 /// application address or `None`.
 ///
-/// `granule` is the aligned start of an application block of `L::GRANULE` bytes.
+/// `granule` is the aligned start of an application block of `P::GRANULE` bytes.
 /// `first` must lie inside that block; `last` is inclusive and may extend
 /// beyond it, so the check clips `last` to the block's end.
 ///
 /// Shadow 0 allows the whole block; a negative value poisons it entirely.
 /// A positive value allows that many leading bytes of the block.
 #[inline(always)]
-fn poisoned_in_granule<L: Layout>(
+fn poisoned_in_granule<P: Platform>(
     shadow: i8,
     granule: usize,
     first: usize,
@@ -68,7 +68,7 @@ fn poisoned_in_granule<L: Layout>(
         None
     } else if shadow < 0 {
         Some(first)
-    } else if last.min(granule + L::GRANULE - 1) >= granule + shadow as usize {
+    } else if last.min(granule + P::GRANULE - 1) >= granule + shadow as usize {
         Some(first.max(granule + shadow as usize))
     } else {
         None
@@ -79,7 +79,7 @@ fn poisoned_in_granule<L: Layout>(
 mod mve {
     //! Exact MVE slice scan, outlined so handlers never enter vector code under LTO.
 
-    use crate::layout::Layout;
+    use crate::platform::Platform;
     use core::arch::asm;
 
     #[inline(always)]
@@ -93,7 +93,7 @@ mod mve {
     /// Scan the shadow of a validated, nonempty application-SRAM range.
     /// Startup must enable MVE and set FPSCR.LEN to 0b100 (no tail-predicated loop).
     #[inline(never)]
-    pub(super) fn find_invalid_shadow_byte<L: Layout>(
+    pub(super) fn find_invalid_shadow_byte<P: Platform>(
         shadow: &[i8],
         first: usize,
         last: usize,
@@ -144,10 +144,10 @@ mod mve {
                 "vmsr vpr, {saved}",
                 shadow = inout(reg) shadow.as_ptr() => _,
                 remaining = inout(reg) shadow.len() => _,
-                base = inout(reg) first & !(L::GRANULE - 1) => _,
-                granule = const L::GRANULE,
-                advance = const 16 * L::GRANULE,
-                scale = const L::SHADOW_SCALE,
+                base = inout(reg) first & !(P::GRANULE - 1) => _,
+                granule = const P::GRANULE,
+                advance = const 16 * P::GRANULE,
+                scale = const P::SHADOW_SCALE,
                 first = in(reg) first,
                 last = in(reg) last,
                 invalid = out(reg) invalid,

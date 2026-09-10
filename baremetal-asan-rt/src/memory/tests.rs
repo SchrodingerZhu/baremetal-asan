@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_layout::Granule8;
+use crate::test_platform::Granule8;
 
 #[test]
 fn memcpy_copies_only_the_requested_bytes_and_returns_destination() {

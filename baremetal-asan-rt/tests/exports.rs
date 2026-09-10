@@ -1,22 +1,26 @@
 use baremetal_asan_rt as runtime;
 use core::ops::Range;
-use runtime::layout::Layout;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use runtime::platform::Platform;
 
-struct TestLayout<const SCALE: u32>;
-impl<const SCALE: u32> Layout for TestLayout<SCALE> {
+struct TestPlatform<const SCALE: u32>;
+static STACK_TOP_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+impl<const SCALE: u32> Platform for TestPlatform<SCALE> {
     const APPLICATION: Range<usize> = 0x1000..0x2000;
     const SHADOW_SCALE: u32 = SCALE;
     const SHADOW_BASE: usize = 0x3000;
+
+    fn stack_top() -> usize {
+        STACK_TOP_CALLS.fetch_add(1, Ordering::Relaxed);
+        0
+    }
 }
 
-fn stack_top() -> usize {
-    0
-}
-
-runtime::export_asan!(TestLayout<3>, stack_top = stack_top);
+runtime::export_asan!(TestPlatform<3>);
 
 #[test]
-fn exports_link_with_a_custom_layout_and_stack_provider() {
+fn exports_use_the_custom_platform_stack_provider() {
     __asan_version_mismatch_check_v8();
     assert_eq!(__asan_stack_malloc_0(16), 0);
     assert_eq!(__asan_stack_malloc_always_10(65536), 0);
@@ -25,7 +29,7 @@ fn exports_link_with_a_custom_layout_and_stack_provider() {
     __asan_register_elf_globals(&mut flag, core::ptr::null_mut(), core::ptr::null_mut());
     assert_eq!(flag, 42);
     // Empty/unsupported accesses and rejected setters must not dereference the
-    // synthetic layout's addresses. The custom stack bound disables cleanup.
+    // synthetic platform's addresses. The custom stack bound disables cleanup.
     unsafe {
         __asan_load1(0);
         __asan_store16(0);
@@ -33,6 +37,7 @@ fn exports_link_with_a_custom_layout_and_stack_provider() {
         __asan_set_shadow_f1(0, 1);
         __asan_set_shadow_00(0x3000, 0);
         __asan_handle_no_return();
+        assert_eq!(STACK_TOP_CALLS.load(Ordering::Relaxed), 1);
         assert_eq!(
             core::ptr::read(core::ptr::addr_of!(
                 __asan_option_detect_stack_use_after_return

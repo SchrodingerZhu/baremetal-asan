@@ -73,31 +73,31 @@ fn sram_only_layout_keeps_all_shadow_out_of_dtcm() {
     );
 }
 
-fn check_boundaries<L: Layout>() {
+fn check_boundaries<P: Platform>() {
     for boundary in [
-        L::APPLICATION.start,
+        P::APPLICATION.start,
         0x2210_0000,
-        L::APPLICATION.end,
+        P::APPLICATION.end,
         usize::MAX - 32,
     ] {
         for addr in boundary - 32..=boundary + 32 {
             for size in 0..=32 {
                 let end = addr.checked_add(size);
-                let first = addr.max(L::APPLICATION.start);
-                let end = end.unwrap_or(0).min(L::APPLICATION.end);
+                let first = addr.max(P::APPLICATION.start);
+                let end = end.unwrap_or(0).min(P::APPLICATION.end);
                 let mut next = first;
-                for part in L::to_ranges(addr, size) {
+                for part in P::to_ranges(addr, size) {
                     assert!(size != 0 && first < end);
                     assert_eq!(part.memory.start, next);
                     assert!(part.memory.end <= end);
                     assert!(!part.bytes.is_empty());
                     assert_eq!(
                         part.bytes.len(),
-                        (part.memory.end - L::APPLICATION.start).div_ceil(L::GRANULE)
-                            - (part.memory.start - L::APPLICATION.start) / L::GRANULE
+                        (part.memory.end - P::APPLICATION.start).div_ceil(P::GRANULE)
+                            - (part.memory.start - P::APPLICATION.start) / P::GRANULE
                     );
                     assert!(
-                        L::to_ranges(0, usize::MAX)
+                        P::to_ranges(0, usize::MAX)
                             .any(|region| region.bytes.start <= part.bytes.start
                                 && part.bytes.end <= region.bytes.end)
                     );
@@ -130,15 +130,15 @@ fn wrapping_ranges_have_no_shadow() {
 }
 
 #[test]
-fn active_layout_matches_feature_selection() {
+fn active_platform_matches_feature_selection() {
     if cfg!(feature = "granule-16") {
-        assert_eq!(ActiveLayout::GRANULE, 16);
-        assert_eq!(ActiveLayout::SHADOW_BASE, 0x2000_0000);
+        assert_eq!(ActivePlatform::GRANULE, 16);
+        assert_eq!(ActivePlatform::SHADOW_BASE, 0x2000_0000);
     } else if cfg!(feature = "no-dtcm") {
-        assert_eq!(ActiveLayout::GRANULE, 8);
-        assert_eq!(ActiveLayout::SHADOW_BASE, 0x2217_0000);
+        assert_eq!(ActivePlatform::GRANULE, 8);
+        assert_eq!(ActivePlatform::SHADOW_BASE, 0x2217_0000);
     } else {
-        assert_eq!(ActiveLayout::GRANULE, 8);
-        assert_eq!(ActiveLayout::SHADOW_BASE, 0x2000_0000);
+        assert_eq!(ActivePlatform::GRANULE, 8);
+        assert_eq!(ActivePlatform::SHADOW_BASE, 0x2000_0000);
     }
 }

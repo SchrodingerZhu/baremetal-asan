@@ -1,14 +1,14 @@
 //! ASan runtime diagnostics.
 
-use crate::layout::Layout;
+use crate::platform::Platform;
 use core::{fmt, marker::PhantomData};
 
 /// # Safety
-/// The layout's shadow must remain initialized, readable, and unchanged while
-/// the panic handler formats the diagnostic, as required by `Layout::to_slices`.
+/// The platform's shadow must remain initialized, readable, and unchanged while
+/// the panic handler formats the diagnostic, as required by `Platform::to_slices`.
 #[cold]
 #[inline(never)]
-pub(crate) unsafe fn report_access<L: Layout>(
+pub(crate) unsafe fn report_access<P: Platform>(
     addr: usize,
     size: usize,
     is_write: bool,
@@ -20,37 +20,37 @@ pub(crate) unsafe fn report_access<L: Layout>(
         size,
         addr,
         invalid,
-        ShadowDump::<L>(invalid, PhantomData),
+        ShadowDump::<P>(invalid, PhantomData),
     );
 }
 
 // Constructed only under report_access's shadow-access contract. Formatting via
 // the panic message keeps the portable runtime independent of its output device.
-struct ShadowDump<L>(usize, PhantomData<L>);
+struct ShadowDump<P>(usize, PhantomData<P>);
 
-impl<L: Layout> fmt::Display for ShadowDump<L> {
+impl<P: Platform> fmt::Display for ShadowDump<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !L::APPLICATION.contains(&self.0) {
+        if !P::APPLICATION.contains(&self.0) {
             return Ok(());
         }
 
         const COLUMNS: usize = 16;
-        let guilty = (self.0 - L::APPLICATION.start) / L::GRANULE;
+        let guilty = (self.0 - P::APPLICATION.start) / P::GRANULE;
         let center = guilty / COLUMNS * COLUMNS;
         let first = center.saturating_sub(5 * COLUMNS);
-        let end = center.saturating_add(6 * COLUMNS).min(L::SHADOW_SIZE);
+        let end = center.saturating_add(6 * COLUMNS).min(P::SHADOW_SIZE);
         writeln!(
             f,
             "Shadow bytes around the buggy address (application addresses):"
         )?;
         for row in (first..end).step_by(COLUMNS) {
-            let addr = L::APPLICATION.start + row * L::GRANULE;
+            let addr = P::APPLICATION.start + row * P::GRANULE;
             let count = COLUMNS.min(end - row);
             let prefix = if row == center { "=>" } else { "  " };
             write!(f, "{prefix}{addr:#010x}:")?;
             // SAFETY: construction guarantees readable, stable shadow. The
             // window is clipped to APPLICATION; each slice stays in one region.
-            let pieces = unsafe { L::to_slices(addr, count * L::GRANULE) };
+            let pieces = unsafe { P::to_slices(addr, count * P::GRANULE) };
             for (column, &value) in pieces.flat_map(|part| part.bytes).enumerate() {
                 let byte = ShadowByte(value as u8);
                 if row + column == guilty {
@@ -65,11 +65,11 @@ impl<L: Layout> fmt::Display for ShadowDump<L> {
         writeln!(
             f,
             "Shadow byte legend (one shadow byte represents {} application bytes):",
-            L::GRANULE,
+            P::GRANULE,
         )?;
         writeln!(f, "  Addressable:           {}", ShadowByte(0))?;
         write!(f, "  Partially addressable:")?;
-        for value in 1..L::GRANULE {
+        for value in 1..P::GRANULE {
             write!(f, " {}", ShadowByte(value as u8))?;
         }
         writeln!(f)?;
