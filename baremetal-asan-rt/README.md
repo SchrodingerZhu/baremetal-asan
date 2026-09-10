@@ -56,4 +56,7 @@ cargo test -p baremetal-asan-rt --all-features
 ```
 
 Release builds use `opt-level = "s"`, ThinLTO, and aborting panics. The consuming
-runtime supplies its own panic handler.
+runtime supplies its own panic handler. Access diagnostics include an ANSI-colored
+shadow dump with the offending byte bracketed and a poison-value legend. Rows
+show application addresses and remain continuous across physical shadow regions;
+the dump is clipped to the layout's application bounds and uses its granule size.

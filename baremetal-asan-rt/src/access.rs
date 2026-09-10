@@ -9,7 +9,8 @@ mod scan;
 #[inline(always)]
 unsafe fn check_access<L: Layout, const SIZE: usize>(addr: usize, size: usize, is_write: bool) {
     if size != 0 && addr.checked_add(size - 1).is_none() {
-        report_access(addr, size, is_write, addr);
+        // SAFETY: the caller supplies initialized, stable shadow RAM.
+        unsafe { report_access::<L>(addr, size, is_write, addr) };
     }
     // SAFETY: startup initializes the layout's shadow RAM. Shadow must remain
     // unchanged while the check borrows it; each slice stays in one RAM region.
@@ -41,7 +42,8 @@ unsafe fn check_access<L: Layout, const SIZE: usize>(addr: usize, size: usize, i
         }
     });
     if let Some(invalid) = invalid {
-        report_access(addr, size, is_write, invalid);
+        // SAFETY: the caller supplies initialized, stable shadow RAM.
+        unsafe { report_access::<L>(addr, size, is_write, invalid) };
     }
 }
 
