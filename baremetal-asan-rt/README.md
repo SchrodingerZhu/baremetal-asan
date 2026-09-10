@@ -94,6 +94,13 @@ its inline saved-flag protocol. Frames whose return is bypassed by `longjmp` or
 other nonlocal control flow are not reclaimed yet. The current no-return hook
 only clears real-stack shadow.
 
+Stack lifetime hooks poison ended objects with `0xf8` and restore their live
+prefixes without invalidating neighboring bytes in a partial granule. Dynamic
+`alloca`/VLA hooks apply LLVM's 32-byte left/right redzones (`0xca`/`0xcb`) and
+clear retired dynamic-stack shadow on return or stack restore. These dynamic
+allocations stay on the real stack; they do not gain fake-stack after-return
+protection. All of these updates use the platform's physical shadow slices.
+
 For split shadow, override `Platform::to_shadow_ranges`; each returned `Shadow` describes
 an application range and its physical shadow range. `platform::map_region` handles
 clipping and granule rounding. The default platform implementation uses one linear
@@ -115,7 +122,7 @@ scalar scans. Variable-size checks scan slices. The optional `mve` feature enabl
 the exact MVE slice scanner on bare-metal ARM; the consuming target must support
 MVE and enable it at startup. Handlers and short slices retain scalar checks.
 
-Global registration and lifetime/dynamic-stack hooks remain stubs.
+Global registration remains stubbed.
 `__asan_init` is not implemented; startup must initialize shadow before allocation.
 See [spec.md](spec.md) for the API list.
 

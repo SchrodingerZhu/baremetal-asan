@@ -4,6 +4,8 @@ use crate::platform::Platform;
 use core::ptr;
 
 pub mod fake_stack;
+mod poisoning;
+pub use poisoning::{alloca_poison, allocas_unpoison, poison_stack_memory, unpoison_stack_memory};
 
 /// Clear stack shadow through `Platform::stack_top()`; zero disables cleanup.
 ///
@@ -131,17 +133,33 @@ macro_rules! export_asan_stack {
             __asan_set_shadow_f8 => 0xf8,
         }
 
+        /// # Safety
+        /// The compiler supplies a granule-aligned object and exclusive initialized shadow.
         #[unsafe(no_mangle)]
-        pub extern "C" fn __asan_poison_stack_memory(_addr: usize, _size: usize) {}
+        pub unsafe extern "C" fn __asan_poison_stack_memory(addr: usize, size: usize) {
+            unsafe { $crate::stack::poison_stack_memory::<$platform>(addr, size) };
+        }
 
+        /// # Safety
+        /// The compiler supplies a granule-aligned object and exclusive initialized shadow.
         #[unsafe(no_mangle)]
-        pub extern "C" fn __asan_unpoison_stack_memory(_addr: usize, _size: usize) {}
+        pub unsafe extern "C" fn __asan_unpoison_stack_memory(addr: usize, size: usize) {
+            unsafe { $crate::stack::unpoison_stack_memory::<$platform>(addr, size) };
+        }
 
+        /// # Safety
+        /// LLVM must reserve its dynamic-alloca redzones and their initialized shadow.
         #[unsafe(no_mangle)]
-        pub extern "C" fn __asan_alloca_poison(_addr: usize, _size: usize) {}
+        pub unsafe extern "C" fn __asan_alloca_poison(addr: usize, size: usize) {
+            unsafe { $crate::stack::alloca_poison::<$platform>(addr, size) };
+        }
 
+        /// # Safety
+        /// The compiler supplies an aligned retired stack range and exclusive shadow access.
         #[unsafe(no_mangle)]
-        pub extern "C" fn __asan_allocas_unpoison(_top: usize, _bottom: usize) {}
+        pub unsafe extern "C" fn __asan_allocas_unpoison(top: usize, bottom: usize) {
+            unsafe { $crate::stack::allocas_unpoison::<$platform>(top, bottom) };
+        }
 
         /// # Safety
         /// The current stack's initialized shadow must be exclusively accessible.

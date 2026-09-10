@@ -43,7 +43,7 @@ For Clang/LLVM on bare-metal Arm ELF. All groups assume `-fsanitize=address`; fl
 | --- | --- | --- |
 | `-mllvm -asan-max-inline-poisoning-size=N` (default: 64) | `__asan_set_shadow_{00,01,02,03,04,05,06,07,f1,f2,f3,f5,f8}` | Fill shadow bytes with the hexadecimal suffix value when an update exceeds the inline threshold. |
 | `-fsanitize-address-use-after-scope` | `__asan_poison_stack_memory`, `__asan_unpoison_stack_memory` | Mark local-variable ranges inaccessible/accessible at lifetime boundaries, when helper calls are emitted. |
-| `-mllvm -asan-instrument-dynamic-allocas=1` (default) | `__asan_alloca_poison`, `__asan_allocas_unpoison` | Poison dynamic stack-allocation redzones, then clear stack-range poisoning during cleanup. |
+| `-mllvm -asan-instrument-dynamic-allocas=1` (default) | `__asan_alloca_poison`, `__asan_allocas_unpoison` | Set 32-byte dynamic-allocation redzones and partial payload shadow, then clear retired stack granules during cleanup. |
 | `-fsanitize-address-use-after-return=runtime` | `__asan_stack_malloc_{0..10}` | Allocate a 64-byte through 64-KiB frame directly from the rotational heap when detection is enabled; return zero when unavailable. |
 | `-fsanitize-address-use-after-return=always` | `__asan_stack_malloc_always_{0..10}` | Allocate a fake-stack frame without consulting the runtime enable flag; return zero when unavailable. |
 | `-fsanitize-address-use-after-return={runtime,always}` and `-mllvm -asan-max-inline-poisoning-size=0` | `__asan_stack_free_{0..10}` | Poison a returned frame with `0xf5` and release it into the heap's existing quarantine. |
