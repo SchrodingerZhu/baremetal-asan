@@ -6,6 +6,7 @@ mod abi;
 pub mod access;
 mod diagnostic;
 mod global;
+pub mod heap;
 pub mod memory;
 pub mod platform;
 pub mod stack;

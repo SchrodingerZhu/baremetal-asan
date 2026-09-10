@@ -71,6 +71,7 @@
           export PATH=${rustToolchain}/bin:${llvm.libcxxStdenv.cc}/bin:${llvm.bintools}/bin:${llvm.llvm}/bin:$PATH
           export CC=${llvm.libcxxStdenv.cc}/bin/clang
           export CXX=${llvm.libcxxStdenv.cc}/bin/clang++
+          export AR=${llvm.llvm}/bin/llvm-ar
           export CMAKE_C_COMPILER_LAUNCHER=
           export CMAKE_CXX_COMPILER_LAUNCHER=
           export RA8XX_COMPILER_LAUNCHER=

@@ -5,6 +5,17 @@ library containing the generic runtime and C ABI export macros. It has no device
 addresses, linker-symbol dependency, semihosting dependency, or panic handler.
 `ra8x2-asan-rt` is the target static library; see its [build and platform settings](../ra8x2-asan-rt/README.md).
 
+`build.rs` uses `cc` to compile the in-tree LLVM libc allocator support directly,
+with dual-free-store rotation from [LLVM PR #209811](https://github.com/llvm/llvm-project/pull/209811)
+and the 32-bit TLSF table fix from [PR #221807](https://github.com/llvm/llvm-project/pull/221807).
+It bundles `freelist.cpp`, `freetrie.cpp`, and our arena FFI; `FreeListHeap`,
+`BlockRef`, and `FreeStore` are header-only. This needs a C++17 compiler and archiver, without
+a CMake build, generated libc headers, or a C++ standard library. For cross builds,
+set `CXX=clang++ AR=llvm-ar` (the repository's Nix shell already provides them).
+Native objects keep linkage independent of Rust's LLVM bitcode version; Rust
+ThinLTO remains enabled. Allocator assertions are disabled because the standalone
+build has no libc assertion/exit backend.
+
 A target crate implements `platform::Platform` and exports the ABI once:
 
 ```rust
@@ -35,9 +46,33 @@ baremetal_asan_rt::export_asan!(MyPlatform);
 
 `stack_top()` returns the current stack's exclusive upper bound; its default zero
 skips no-return cleanup. `alloc_base()` and `alloc_size()` describe one reserved
-arena for future heap and fake-stack allocations. They default to zero (no arena).
+arena for heap and future fake-stack allocations. They default to zero (no arena).
 Reserve that arena within application RAM, disjoint from program data, the real
 stack, and shadow. The example reserves `0x2000_8000..0x2000_c000` for allocation.
+
+`heap::Heap<P>` initializes LLVM libc's heap in this arena. Its prefix holds the
+C++ allocator state, so usable capacity is smaller than `alloc_size()`. Create a
+heap with `Heap::new()`, call `unsafe { heap.init() }` once, then use
+`heap.allocate(Layout)` and `unsafe { heap.deallocate(ptr) }`. Initialization
+returns false for invalid/insufficient storage or an already initialized heap;
+allocation returns `None` before initialization, for zero size, or on exhaustion.
+An Embassy `CriticalSectionMutex` serializes every operation; RA8x2 supplies the
+Cortex-M single-core backend. Frees enter quarantine. Allocation pressure rotates
+the stores and coalesces remaining free blocks, holding the critical section for
+the entire rotation. Live allocations stay in place.
+
+The raw C interface is declared in [allocator.h](src/heap/allocator.h):
+
+| Function | Functionality |
+| --- | --- |
+| `__baremetal_asan_heap_init(base, size)` | Construct allocator state inside the arena and return an opaque handle, or null on failure. |
+| `__baremetal_asan_heap_allocate(heap, size, alignment)` | Allocate with power-of-two alignment; size need not be an alignment multiple. |
+| `__baremetal_asan_heap_deallocate(heap, ptr)` | Quarantine a live allocation; a null pointer is ignored. |
+
+C callers must initialize each arena once and serialize access themselves. These
+are raw storage operations; redzones, shadow poisoning, and fake-stack allocation
+are not wired up yet. The build does not include libc's global heap or export its
+`malloc`, `free`, `calloc`, `realloc`, or `aligned_alloc` entrypoints.
 
 For split shadow, override `Platform::to_shadow_ranges`; each returned `Shadow` describes
 an application range and its physical shadow range. `platform::map_region` handles

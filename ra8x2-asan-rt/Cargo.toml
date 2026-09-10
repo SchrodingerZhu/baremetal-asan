@@ -15,4 +15,5 @@ no-dtcm = []
 baremetal-asan-rt = { path = "../baremetal-asan-rt" }
 
 [target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 semihosting = { version = "0.1", features = ["stdio", "panic-handler"] }

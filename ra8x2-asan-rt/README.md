@@ -75,8 +75,10 @@ __asan_alloc_size = (__stack - 16K) - __asan_alloc_base;
 ASSERT(__asan_alloc_base <= __stack - 16K, "allocation arena overlaps stack")
 ```
 
-The linker must keep other sections out of this arena. These hooks describe the
-memory source only; heap and fake-stack allocation are not implemented yet.
+The linker must keep other sections out of this arena. `baremetal_asan_rt::heap::Heap`
+uses it for LLVM libc's allocator state and allocation storage. This target
+supplies the Cortex-M single-core critical-section backend. Heap redzones/shadow
+poisoning and fake-stack allocation are not implemented yet.
 
 ```sh
 cargo test --workspace

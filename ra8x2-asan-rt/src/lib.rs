@@ -6,4 +6,6 @@ pub mod platform;
 baremetal_asan_rt::export_asan!(platform::ActivePlatform);
 
 #[cfg(all(target_arch = "arm", target_os = "none"))]
+use cortex_m as _;
+#[cfg(all(target_arch = "arm", target_os = "none"))]
 use semihosting as _;
