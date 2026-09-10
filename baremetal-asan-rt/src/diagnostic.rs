@@ -5,7 +5,7 @@ use core::{fmt, marker::PhantomData};
 
 /// # Safety
 /// The platform's shadow must remain initialized, readable, and unchanged while
-/// the panic handler formats the diagnostic, as required by `Platform::to_slices`.
+/// the panic handler formats the diagnostic, as required by `Platform::to_shadow_slices`.
 #[cold]
 #[inline(never)]
 pub(crate) unsafe fn report_access<P: Platform>(
@@ -50,7 +50,7 @@ impl<P: Platform> fmt::Display for ShadowDump<P> {
             write!(f, "{prefix}{addr:#010x}:")?;
             // SAFETY: construction guarantees readable, stable shadow. The
             // window is clipped to APPLICATION; each slice stays in one region.
-            let pieces = unsafe { P::to_slices(addr, count * P::GRANULE) };
+            let pieces = unsafe { P::to_shadow_slices(addr, count * P::GRANULE) };
             for (column, &value) in pieces.flat_map(|part| part.bytes).enumerate() {
                 let byte = ShadowByte(value as u8);
                 if row + column == guilty {

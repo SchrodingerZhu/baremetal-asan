@@ -26,7 +26,7 @@ pub unsafe fn handle_no_return<P: Platform>() {
 
     // SAFETY: cleanup has exclusive access to the current stack's initialized
     // shadow. The platform clips the range and splits it into backing RAM regions.
-    unsafe { P::to_slices_mut(bottom, top - bottom) }.for_each(|part| part.bytes.fill(0));
+    unsafe { P::to_shadow_slices_mut(bottom, top - bottom) }.for_each(|part| part.bytes.fill(0));
 }
 
 #[doc(hidden)]

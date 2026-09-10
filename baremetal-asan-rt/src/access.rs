@@ -14,7 +14,7 @@ unsafe fn check_access<P: Platform, const SIZE: usize>(addr: usize, size: usize,
     }
     // SAFETY: startup initializes the platform's shadow RAM. Shadow must remain
     // unchanged while the check borrows it; each slice stays in one RAM region.
-    let invalid = unsafe { P::to_slices(addr, size) }.find_map(|part| {
+    let invalid = unsafe { P::to_shadow_slices(addr, size) }.find_map(|part| {
         let first = part.memory.start;
         let last = part.memory.end - 1;
         if SIZE != 0 && SIZE <= 2 * P::GRANULE {
@@ -51,7 +51,7 @@ unsafe fn check_access<P: Platform, const SIZE: usize>(addr: usize, size: usize,
 ///
 /// # Safety
 /// Shadow RAM must be initialized and readable, without concurrent mutation
-/// during this check, as required by `Platform::to_slices`.
+/// during this check, as required by `Platform::to_shadow_slices`.
 #[inline(always)]
 pub unsafe fn check_access_fixed<P: Platform, const SIZE: usize>(addr: usize, is_write: bool) {
     // SAFETY: the caller supplies the platform's initialized shadow RAM.

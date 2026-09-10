@@ -25,11 +25,11 @@
 //!           └───────────────┘             └───────────────┘
 //! ```
 //!
-//! Outlined access checks receive application addresses and use `to_slices` to
+//! Outlined access checks receive application addresses and use `to_shadow_slices` to
 //! borrow the corresponding physical shadow. Each slice stays within one region.
 //! Shadow setters instead receive logical shadow addresses and shadow-byte counts.
 //! `set_shadow` subtracts `SHADOW_BASE`, recovers the application granules, and
-//! uses `to_slices_mut` to fill their physical shadow pieces.
+//! uses `to_shadow_slices_mut` to fill their physical shadow pieces.
 //!
 //! The default platform mapping makes logical and physical shadow addresses equal.
 //! When they differ, LLVM's shadow operations must be outlined so the runtime can
@@ -88,7 +88,7 @@ pub trait Platform: Sized {
     /// Empty, wrapping, and unsupported ranges yield no pieces; overlaps are clipped.
     /// The default maps to contiguous shadow starting at `SHADOW_BASE`.
     #[inline(always)]
-    fn to_ranges(addr: usize, size: usize) -> impl Iterator<Item = Shadow<Range<usize>>> {
+    fn to_shadow_ranges(addr: usize, size: usize) -> impl Iterator<Item = Shadow<Range<usize>>> {
         let last = size.checked_sub(1).and_then(|size| addr.checked_add(size));
         map_region::<Self>(addr, last, Self::APPLICATION, Self::SHADOW_BASE).into_iter()
     }
@@ -99,8 +99,11 @@ pub trait Platform: Sized {
     /// The platform must describe initialized, readable shadow RAM that remains
     /// unmodified while any returned slice is borrowed.
     #[inline(always)]
-    unsafe fn to_slices(addr: usize, size: usize) -> impl Iterator<Item = Shadow<&'static [i8]>> {
-        Self::to_ranges(addr, size).map(|part| Shadow {
+    unsafe fn to_shadow_slices(
+        addr: usize,
+        size: usize,
+    ) -> impl Iterator<Item = Shadow<&'static [i8]>> {
+        Self::to_shadow_ranges(addr, size).map(|part| Shadow {
             memory: part.memory,
             // SAFETY: each range lies in one backing region supplied by the caller.
             bytes: unsafe {
@@ -115,11 +118,11 @@ pub trait Platform: Sized {
     /// The platform must describe initialized, writable shadow RAM. Each returned
     /// slice must have exclusive access to its bytes for the duration of its borrow.
     #[inline(always)]
-    unsafe fn to_slices_mut(
+    unsafe fn to_shadow_slices_mut(
         addr: usize,
         size: usize,
     ) -> impl Iterator<Item = Shadow<&'static mut [i8]>> {
-        Self::to_ranges(addr, size).map(|part| Shadow {
+        Self::to_shadow_ranges(addr, size).map(|part| Shadow {
             memory: part.memory,
             // SAFETY: the caller guarantees exclusive access to disjoint regions.
             bytes: unsafe {
@@ -131,7 +134,7 @@ pub trait Platform: Sized {
     /// Fill a compiler-provided logical shadow range, ignoring invalid ranges.
     ///
     /// # Safety
-    /// The same initialization and exclusive-access requirements as `to_slices_mut`.
+    /// The same initialization and exclusive-access requirements as `to_shadow_slices_mut`.
     #[inline(always)]
     unsafe fn set_shadow(addr: usize, size: usize, value: i8) {
         let Some(offset) = addr.checked_sub(Self::SHADOW_BASE) else {
@@ -143,7 +146,7 @@ pub trait Platform: Sized {
         }
         let memory = Self::APPLICATION.start + offset * Self::GRANULE;
         // SAFETY: the caller provides exclusive shadow access; the range is valid.
-        unsafe { Self::to_slices_mut(memory, size * Self::GRANULE) }
+        unsafe { Self::to_shadow_slices_mut(memory, size * Self::GRANULE) }
             .for_each(|part| part.bytes.fill(value));
     }
 }

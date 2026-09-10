@@ -72,7 +72,7 @@ impl Platform for Ra8m2Granule8 {
     linker_bounds!();
 
     #[inline(always)]
-    fn to_ranges(addr: usize, size: usize) -> impl Iterator<Item = Shadow<Range<usize>>> {
+    fn to_shadow_ranges(addr: usize, size: usize) -> impl Iterator<Item = Shadow<Range<usize>>> {
         let last = size.checked_sub(1).and_then(|size| addr.checked_add(size));
         // Form each optional piece before chaining to keep the fixed region count
         // visible to the consumer, without iterating a region table.

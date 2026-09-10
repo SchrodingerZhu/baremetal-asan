@@ -25,7 +25,7 @@ fn logical_mapping_supports_shadow_below_shifted_application_addresses() {
             shadow
         );
         assert_eq!(
-            LowShadow::to_ranges(app, 1).next().unwrap().bytes,
+            LowShadow::to_shadow_ranges(app, 1).next().unwrap().bytes,
             shadow..shadow + 1
         );
     }

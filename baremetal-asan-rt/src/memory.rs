@@ -10,7 +10,7 @@ use crate::{access::check_range, platform::Platform};
 /// Identical source and destination are accepted, as in the host ASan runtime.
 ///
 /// # Safety
-/// Shadow RAM must satisfy `Platform::to_slices` throughout the check.
+/// Shadow RAM must satisfy `Platform::to_shadow_slices` throughout the check.
 /// For nonzero `size`, `src` must be readable and `dst` writable for `size` bytes.
 pub unsafe fn memcpy<P: Platform>(
     dst: *mut c_void,
@@ -35,7 +35,7 @@ pub unsafe fn memcpy<P: Platform>(
 /// Check both ranges, copy bytes with overlap support, and return `dst`.
 ///
 /// # Safety
-/// Shadow RAM must satisfy `Platform::to_slices` throughout the check.
+/// Shadow RAM must satisfy `Platform::to_shadow_slices` throughout the check.
 /// For nonzero `size`, `src` must be readable and `dst` writable for `size` bytes.
 pub unsafe fn memmove<P: Platform>(
     dst: *mut c_void,
@@ -54,7 +54,7 @@ pub unsafe fn memmove<P: Platform>(
 /// Check the destination, fill it with the low byte of `value`, and return it.
 ///
 /// # Safety
-/// Shadow RAM must satisfy `Platform::to_slices` throughout the check.
+/// Shadow RAM must satisfy `Platform::to_shadow_slices` throughout the check.
 /// For nonzero `size`, `dst` must be writable for `size` bytes.
 pub unsafe fn memset<P: Platform>(dst: *mut c_void, value: c_int, size: usize) -> *mut c_void {
     if size != 0 {

@@ -39,10 +39,10 @@ arena for future heap and fake-stack allocations. They default to zero (no arena
 Reserve that arena within application RAM, disjoint from program data, the real
 stack, and shadow. The example reserves `0x2000_8000..0x2000_c000` for allocation.
 
-For split shadow, override `Platform::to_ranges`; each returned `Shadow` describes
+For split shadow, override `Platform::to_shadow_ranges`; each returned `Shadow` describes
 an application range and its physical shadow range. `platform::map_region` handles
 clipping and granule rounding. The default platform implementation uses one linear
-shadow range. `to_slices` and `to_slices_mut` borrow those ranges without copying.
+shadow range. `to_shadow_slices` and `to_shadow_slices_mut` borrow those ranges without copying.
 Shadow setters validate a logical shadow request before filling its physical
 pieces. Target startup must reserve and initialize shadow RAM, and LLVM's mapping
 scale and offset must match the platform.

@@ -16,7 +16,7 @@ impl<const SCALE: u32> Platform for Split<SCALE> {
     const SHADOW_SCALE: u32 = SCALE;
     const SHADOW_BASE: usize = 0;
 
-    fn to_ranges(addr: usize, size: usize) -> impl Iterator<Item = Shadow<Range<usize>>> {
+    fn to_shadow_ranges(addr: usize, size: usize) -> impl Iterator<Item = Shadow<Range<usize>>> {
         let last = size.checked_sub(1).and_then(|n| addr.checked_add(n));
         let split = Self::APPLICATION.start + LEFT.len() * Self::GRANULE;
         map_region::<Self>(
