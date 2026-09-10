@@ -1239,6 +1239,23 @@ bool LinkerScript::assignOffsets(OutputSection *sec) {
   const bool prevLMARegionIsDefault = state->lmaRegion == nullptr;
   const uint64_t savedDot = dot;
   bool addressChanged = false;
+  const bool mapAsanShadow =
+      !ctx.arg.asanShadowSection.empty() && !ctx.arg.relocatable;
+  const uint64_t oldSize = sec->size;
+  OutputSection *asanGlobals = nullptr;
+  InputSection *lastAsanShadow = nullptr;
+  if (mapAsanShadow && sec->name == ctx.arg.asanShadowSection) {
+    auto it = llvm::find_if(ctx.outputSections, [&](OutputSection *s) {
+      return s->name == ctx.arg.asanGlobalsSection;
+    });
+    if (it != ctx.outputSections.end())
+      asanGlobals = *it;
+    for (SectionCommand *cmd : sec->commands)
+      if (auto *isd = dyn_cast<InputSectionDescription>(cmd))
+        for (InputSection *isec : isd->sections)
+          if (isec->name == "__shadow_ro")
+            lastAsanShadow = isec;
+  }
   state->memRegion = sec->memRegion;
   state->lmaRegion = sec->lmaRegion;
 
@@ -1341,12 +1358,34 @@ bool LinkerScript::assignOffsets(OutputSection *sec) {
       if (isa<PotentialSpillSection>(isec))
         continue;
       const uint64_t pos = dot;
+      if (asanGlobals && isec->name == "__shadow_ro" &&
+          (isec->flags & SHF_LINK_ORDER)) {
+        InputSection *global = isec->getLinkOrderDep();
+        if (global && global->getParent() == asanGlobals) {
+          uint64_t offset = global->outSecOff >> ctx.arg.asanShadowScale;
+          // Recompute on every address-assignment pass: alignment, script
+          // expressions and relaxation can change the target's final offset.
+          // Leave impossible placements to checkAsanShadow after convergence.
+          if (offset <= UINT64_MAX - sec->addr)
+            dot = std::max(dot, sec->addr + offset);
+        }
+      }
       // If synthesized ALIGN may be needed, call maybeSynthesizeAlign and
       // disable the default handling if the return value is true.
       if (!(synthesizeAlign && ctx.target->synthesizeAlign(dot, isec)))
         dot = alignToPowerOf2(dot, isec->addralign);
+      if (mapAsanShadow)
+        addressChanged |= isec->outSecOff != dot - sec->addr;
       isec->outSecOff = dot - sec->addr;
       dot += isec->getSize();
+      if (asanGlobals && isec == lastAsanShadow) {
+        uint64_t size = divideCeil(asanGlobals->size,
+                                   uint64_t(1) << ctx.arg.asanShadowScale);
+        // Include trailing global-section padding before evaluating symbols
+        // after the last shadow input section (for example __shadow_end = .).
+        if (size <= UINT64_MAX - sec->addr)
+          dot = std::max(dot, sec->addr + size);
+      }
 
       // Update output section size after adding each section. This is so that
       // SIZEOF works correctly in the case below:
@@ -1375,7 +1414,89 @@ bool LinkerScript::assignOffsets(OutputSection *sec) {
     state->tbssAddr = dot;
     dot = savedDot;
   }
-  return addressChanged;
+  return addressChanged || (mapAsanShadow && oldSize != sec->size);
+}
+
+// The linker script chooses physical storage. SHF_WRITE does not identify a
+// hardware ROM/RAM region, and no section is rerouted based on that flag.
+void LinkerScript::checkAsanShadow() {
+  if (ctx.arg.asanShadowSection.empty() || ctx.arg.relocatable)
+    return;
+
+  OutputSection *globals = nullptr, *shadow = nullptr;
+  for (OutputSection *sec : ctx.outputSections) {
+    OutputSection **slot = nullptr;
+    if (sec->name == ctx.arg.asanGlobalsSection)
+      slot = &globals;
+    else if (sec->name == ctx.arg.asanShadowSection)
+      slot = &shadow;
+    if (slot) {
+      if (*slot)
+        Err(ctx) << "ambiguous ASan output section " << sec->name;
+      *slot = sec;
+    }
+  }
+  // Both sections may have disappeared under --gc-sections.
+  if (!globals && !shadow &&
+      llvm::none_of(ctx.inputSections, [](InputSectionBase *isec) {
+        return isec->name == "__shadow_ro" && isec->isLive();
+      }))
+    return;
+  if (!globals || !shadow) {
+    Err(ctx) << "--asan-shadow-section requires output sections "
+             << ctx.arg.asanGlobalsSection << " and "
+             << ctx.arg.asanShadowSection;
+    return;
+  }
+
+  const uint64_t granule = uint64_t(1) << ctx.arg.asanShadowScale;
+  if (!(globals->flags & SHF_ALLOC) || (globals->flags & SHF_WRITE) ||
+      !(shadow->flags & SHF_ALLOC) || (shadow->flags & SHF_WRITE) ||
+      globals->type != SHT_PROGBITS || shadow->type != SHT_PROGBITS)
+    Err(ctx) << "static ASan globals and shadow require read-only allocatable "
+                "PROGBITS output sections";
+  if (globals->addr % granule)
+    Err(ctx) << "ASan globals section " << globals->name
+             << " is not aligned to the shadow granule";
+  if (shadow->size != divideCeil(globals->size, granule))
+    Err(ctx) << "ASan shadow section " << shadow->name
+             << " does not match the scaled size of " << globals->name;
+
+  for (OutputSection *sec : ctx.outputSections) {
+    for (SectionCommand *cmd : sec->commands) {
+      auto *isd = dyn_cast<InputSectionDescription>(cmd);
+      if (!isd)
+        continue;
+      for (InputSection *isec : isd->sections) {
+        if (isec->name != "__shadow_ro") {
+          if (sec == shadow)
+            Err(ctx) << "unexpected input section " << isec
+                     << " in static ASan shadow";
+          continue;
+        }
+        InputSection *global =
+            isec->flags & SHF_LINK_ORDER ? isec->getLinkOrderDep() : nullptr;
+        if (sec != shadow || !global || global->getParent() != globals) {
+          Err(ctx) << isec
+                   << ": static ASan shadow must be associated with a "
+                      "global in "
+                   << globals->name << " and placed in " << shadow->name;
+          continue;
+        }
+        if (global->outSecOff % granule || global->getSize() % granule ||
+            isec->getSize() != global->getSize() / granule)
+          Err(ctx) << isec
+                   << ": static ASan shadow size/alignment does not match "
+                      "its global; use one global per input section "
+                      "(-fdata-sections) and matching shadow scales";
+        uint64_t offset = global->outSecOff >> ctx.arg.asanShadowScale;
+        if (isec->outSecOff != offset)
+          Err(ctx) << isec << ": cannot place static ASan shadow at offset 0x"
+                   << Twine::utohexstr(offset) << " in " << shadow->name
+                   << "; check section order, alignment and script contents";
+      }
+    }
+  }
 }
 
 static bool isDiscardable(const OutputSection &sec) {

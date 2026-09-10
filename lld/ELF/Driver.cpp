@@ -315,6 +315,8 @@ static void initLLVM() {
 // Some command line options or some combinations of them are not allowed.
 // This function checks for such errors.
 static void checkOptions(Ctx &ctx) {
+  if (!ctx.arg.asanShadowSection.empty() && (ctx.arg.shared || ctx.arg.pie))
+    ErrAlways(ctx) << "--asan-shadow-section requires a static executable";
   // The MIPS ABI as of 2016 does not support the GNU-style symbol lookup
   // table which is a relatively new feature.
   if (ctx.arg.emachine == EM_MIPS && ctx.arg.gnuHash)
@@ -1385,6 +1387,24 @@ static void readConfigs(Ctx &ctx, opt::InputArgList &args) {
       hasZOption(args, "muldefs") ||
       args.hasFlag(OPT_allow_multiple_definition,
                    OPT_no_allow_multiple_definition, false);
+  if (auto *arg = args.getLastArg(OPT_asan_shadow_section)) {
+    auto [globals, shadow] = StringRef(arg->getValue()).split(':');
+    if (globals.empty() || shadow.empty() || shadow.contains(':') ||
+        globals == shadow)
+      ErrAlways(ctx)
+          << "--asan-shadow-section expects distinct output sections "
+             "<globals>:<shadow>";
+    ctx.arg.asanGlobalsSection = globals;
+    ctx.arg.asanShadowSection = shadow;
+  }
+  int64_t asanShadowScale = args::getInteger(args, OPT_asan_shadow_scale, 3);
+  if (asanShadowScale < 0 || asanShadowScale > 7)
+    ErrAlways(ctx) << "--asan-shadow-scale must be between 0 and 7";
+  else
+    ctx.arg.asanShadowScale = asanShadowScale;
+  if (args.hasArg(OPT_asan_shadow_scale) &&
+      !args.hasArg(OPT_asan_shadow_section))
+    ErrAlways(ctx) << "--asan-shadow-scale requires --asan-shadow-section";
   ctx.arg.memtagHeap = hasZOption(args, "memtag-heap");
   ctx.arg.memtagStack = hasZOption(args, "memtag-stack");
   ctx.arg.memtagAndroidNote = args.hasArg(OPT_android_memtag_note);

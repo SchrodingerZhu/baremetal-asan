@@ -475,6 +475,13 @@ static cl::opt<std::string> ClGlobalsMetadataSection(
     cl::desc("Emit global variable descriptions in a named section"),
     cl::init(""));
 
+static cl::opt<bool> ClCreateGlobalShadow(
+    "asan-create-global-shadow",
+    cl::desc(
+        "Emit static shadow for constant globals alongside section metadata "
+        "(ELF only)"),
+    cl::Hidden, cl::init(false));
+
 STATISTIC(NumInstrumentedReads, "Number of instrumented reads");
 STATISTIC(NumInstrumentedWrites, "Number of instrumented writes");
 STATISTIC(NumOptimizedAccessesToGlobalVar,
@@ -1025,6 +1032,8 @@ private:
   void InstrumentGlobalsMetadataSection(
       IRBuilder<> &IRB, ArrayRef<GlobalVariable *> ExtendedGlobals,
       ArrayRef<Constant *> MetadataInitializers, StringRef SectionName);
+  GlobalVariable *createGlobalShadow(GlobalVariable *G, uint64_t ValidSize,
+                                     uint64_t RedzoneSize);
   void InstrumentGlobalsMachO(IRBuilder<> &IRB,
                               ArrayRef<GlobalVariable *> ExtendedGlobals,
                               ArrayRef<Constant *> MetadataInitializers);
@@ -2581,6 +2590,31 @@ void ModuleAddressSanitizer::InstrumentGlobalsMetadataSection(
     appendToCompilerUsed(M, MetadataGlobals);
 }
 
+GlobalVariable *ModuleAddressSanitizer::createGlobalShadow(
+    GlobalVariable *G, uint64_t ValidSize, uint64_t RedzoneSize) {
+  const uint64_t Granularity = 1ULL << Mapping.Scale;
+  constexpr uint8_t kAsanGlobalRedzoneMagic = 0xf9;
+  SmallVector<uint8_t, 16> Shadow(ValidSize / Granularity, 0);
+  if (ValidSize % Granularity)
+    Shadow.push_back(ValidSize % Granularity);
+  Shadow.resize((ValidSize + RedzoneSize) / Granularity,
+                kAsanGlobalRedzoneMagic);
+  Constant *Initializer = ConstantDataArray::get(*C, Shadow);
+  auto *ShadowGV = new GlobalVariable(
+      M, Initializer->getType(), true, GlobalValue::PrivateLinkage, Initializer,
+      "__asan_global_shadow_" +
+          GlobalValue::dropLLVMManglingEscape(G->getName()));
+  ShadowGV->setSection("__shadow_ro");
+  ShadowGV->setAlignment(Align(1));
+  ShadowGV->setComdat(G->getComdat());
+  ShadowGV->setMetadata(LLVMContext::MD_associated,
+                        MDNode::get(*C, ValueAsMetadata::get(G)));
+  // SHF_LINK_ORDER ties the shadow's liveness and order to its global. Final
+  // placement must also account for scaled gaps between globals. Compile with
+  // -fdata-sections so each associated section describes exactly one global.
+  return ShadowGV;
+}
+
 void ModuleAddressSanitizer::InstrumentGlobalsMachO(
     IRBuilder<> &IRB, ArrayRef<GlobalVariable *> ExtendedGlobals,
     ArrayRef<Constant *> MetadataInitializers) {
@@ -2713,6 +2747,7 @@ void ModuleAddressSanitizer::instrumentGlobals(IRBuilder<> &IRB,
                       IntptrTy, IntptrTy, IntptrTy);
   SmallVector<GlobalVariable *, 16> NewGlobals(n);
   SmallVector<Constant *, 16> Initializers(n);
+  SmallVector<GlobalValue *, 16> StaticShadows;
 
   for (size_t i = 0; i < n; i++) {
     GlobalVariable *G = GlobalsToChange[i];
@@ -2815,11 +2850,15 @@ void ModuleAddressSanitizer::instrumentGlobals(IRBuilder<> &IRB,
     LLVM_DEBUG(dbgs() << "NEW GLOBAL: " << *NewGlobal << "\n");
 
     Initializers[i] = Initializer;
+    if (ClCreateGlobalShadow && NewGlobal->isConstant() && !MD.IsDynInit)
+      StaticShadows.push_back(
+          createGlobalShadow(NewGlobal, SizeInBytes, RightRedzoneSize));
   }
 
   // Add instrumented globals to llvm.compiler.used list to avoid LTO from
   // ConstantMerge'ing them.
   SmallVector<GlobalValue *, 16> GlobalsToAddToUsedList;
+  llvm::append_range(GlobalsToAddToUsedList, StaticShadows);
   for (size_t i = 0; i < n; i++) {
     GlobalVariable *G = NewGlobals[i];
     if (G->getName().empty()) continue;
@@ -2906,6 +2945,12 @@ GlobalVariable *ModuleAddressSanitizer::getOrCreateModuleName() {
 }
 
 bool ModuleAddressSanitizer::instrumentModule() {
+  if (ClCreateGlobalShadow &&
+      (!TargetTriple.isOSBinFormatELF() || ClGlobalsMetadataSection.empty())) {
+    C->emitError("-asan-create-global-shadow requires an ELF target and "
+                 "-asan-globals-metadata-section");
+    return false;
+  }
   initializeCallbacks();
 
   for (Function &F : M)

@@ -1626,6 +1626,8 @@ template <class ELFT> void Writer<ELFT>::finalizeAddressDependentContent() {
   if (!ctx.arg.relocatable)
     ctx.target->finalizeRelax(pass);
 
+  ctx.script->checkAsanShadow();
+
   if (ctx.arg.relocatable)
     for (OutputSection *sec : ctx.outputSections)
       sec->addr = 0;

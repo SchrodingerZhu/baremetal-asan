@@ -378,6 +378,7 @@ public:
 
   bool shouldKeep(InputSectionBase *s);
   std::pair<const OutputSection *, const Defined *> assignAddresses();
+  void checkAsanShadow();
   bool spillSections();
   void erasePotentialSpillSections();
   void allocateHeaders(SmallVector<std::unique_ptr<PhdrEntry>, 0> &phdrs);

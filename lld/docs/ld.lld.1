@@ -64,6 +64,18 @@ Apply link-time values for dynamic relocations.
 Only set
 .Dv DT_NEEDED
 for shared libraries if used.
+.It Fl -asan-shadow-section Ns = Ns Ar globals:shadow
+Place precomputed AddressSanitizer shadow using a pair of output sections.
+The offset of each shadow array is the associated global's offset in
+.Ar globals
+shifted right by the shadow scale.
+The linker script chooses both sections' addresses.
+Requires a static executable; relocatable links defer placement.
+.It Fl -asan-shadow-scale Ns = Ns Ar value
+Set the static AddressSanitizer shadow scale, from 0 to 7 (default: 3).
+Requires
+.Fl -asan-shadow-section
+and must match the compiler's shadow scale.
 .It Fl -auxiliary Ns = Ns Ar value
 Set the
 .Dv DT_AUXILIARY

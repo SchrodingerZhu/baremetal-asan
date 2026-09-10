@@ -36,6 +36,11 @@ multiclass B<string name, string help1, string help2> {
 
 defm auxiliary: Eq<"auxiliary", "Set DT_AUXILIARY field to the specified name">;
 
+defm asan_shadow_section: EEq<"asan-shadow-section",
+    "Place static ASan shadow using paired output sections <globals>:<shadow>">;
+defm asan_shadow_scale: EEq<"asan-shadow-scale",
+    "Static ASan shadow scale, from 0 to 7 (default: 3)">;
+
 def be8: F<"be8">, HelpText<"write a Big Endian ELF file using BE8 format (AArch32 only)">;
 
 def Bno_symbolic: F<"Bno-symbolic">, HelpText<"Don't bind default visibility defined symbols locally for -shared (default)">;

@@ -127,6 +127,7 @@ error_handling_script
 ReleaseNotes
 ELF/large_sections
 ELF/linker_script
+ELF/asan_shadow
 ELF/start-stop-gc
 ELF/warn_backrefs
 MachO/index

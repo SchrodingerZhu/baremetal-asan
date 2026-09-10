@@ -299,6 +299,11 @@ struct Config {
   llvm::StringRef thinLTOPrefixReplaceNew;
   llvm::StringRef thinLTOPrefixReplaceNativeObject;
   std::string rpath;
+  // Static shadow maps offsets in one global output section to offsets in a
+  // separate shadow output section. Their addresses are chosen by the script.
+  llvm::StringRef asanGlobalsSection;
+  llvm::StringRef asanShadowSection;
+  unsigned asanShadowScale = 3;
   llvm::SmallVector<VersionDefinition, 0> versionDefinitions;
   std::optional<llvm::DenseSet<llvm::StringRef>> retainSymbols;
   llvm::SmallVector<llvm::StringRef, 0> auxiliaryList;
