@@ -2,7 +2,7 @@
 
 This `no_std` static library instantiates `baremetal-asan-rt` with an RA8M2
 platform. It owns semihosting and its panic handler, plus optional weak linker
-symbols for stack and allocation bounds. `src/platform.rs` contains all device
+symbols for stack, allocation, and ROM bounds. `src/platform.rs` contains all device
 addresses and the application-to-logical-to-physical shadow diagram.
 
 | Feature | Platform | Application SRAM (exclusive end) | Physical shadow |
@@ -25,6 +25,28 @@ including partial final granules; descriptors for flash constants are skipped.
 A compiler built with the imported LLVM PR #212890 can emit this section with
 `-mllvm -asan-globals-metadata-section=asan_globals`. The normal ELF metadata
 section has the same ABI and also supports explicit startup initialization.
+
+All three platforms also support precomputed ROM shadow through four weak linker
+symbols:
+
+| Application ROM | Physical ROM shadow |
+| --- | --- |
+| `__asan_rodata_start..__asan_rodata_end` | `__asan_ro_shadow_start..__asan_ro_shadow_end` |
+
+Range ends are exclusive. The application bounds must be granule-aligned and the
+shadow size must equal the application size divided by the selected granule.
+Missing, empty, or inconsistent bounds disable this optional mapping. Physical
+ROM shadow can be placed at a higher ROM address; it uses no TCM or SRAM.
+
+Compile constant globals with `-fdata-sections`,
+`-mllvm -asan-create-global-shadow`, and the metadata-section option above. Keep
+`.rodata` separate from `.text`, collect `__shadow_ro` into `.asan_shadow`, and
+link with `--asan-shadow-section=.rodata:.asan_shadow` and
+`--asan-shadow-scale=3` (or `4` for `granule-16`). Define the four symbols at the
+bounds of those output sections. The [static-shadow linker documentation](../lld/docs/ELF/asan_shadow.md)
+describes the full contract. The runtime reads ROM shadow directly; SRAM startup
+initialization and mutable shadow hooks leave it untouched. Access reports also
+display ROM shadow bytes.
 
 Build the target archive (`target/thumbv8m.main-none-eabihf/release/libra8x2_asan_rt.a`):
 

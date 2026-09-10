@@ -14,6 +14,11 @@
 //! Outlined access checks receive application addresses; LLVM's shadow setters
 //! receive logical shadow addresses. Both use the same physical backing slices.
 //! With sixteen-byte granules, logical and physical shadow coincide in DTCM.
+//!
+//! ROM globals and their static shadow are bounded by optional linker symbols.
+//! The ROM mapping adds `(addr - __asan_rodata_start) / GRANULE` to
+//! `__asan_ro_shadow_start`; the linker may place it higher in ROM, using no TCM.
+//! Only read mappings include this range. Missing or empty bounds disable it.
 
 use baremetal_asan_rt::platform::{Platform, Shadow, map_region};
 use core::ops::Range;
@@ -26,6 +31,30 @@ macro_rules! linker_bounds {
             stack_top => "__stack",
             alloc_base => "__asan_alloc_base",
             alloc_size => "__asan_alloc_size",
+        }
+
+        #[inline(always)]
+        fn rom_shadow() -> Option<Shadow<Range<usize>>> {
+            linker_bounds! {
+                rom_start => "__asan_rodata_start",
+                rom_end => "__asan_rodata_end",
+                shadow_start => "__asan_ro_shadow_start",
+                shadow_end => "__asan_ro_shadow_end",
+            }
+            let memory = rom_start()..rom_end();
+            let bytes = shadow_start()..shadow_end();
+            if memory.start >= memory.end || bytes.start == 0 || bytes.start >= bytes.end {
+                return None;
+            }
+            // The compiler, linker and runtime must agree on the granule size.
+            // An image without static shadow leaves an empty shadow section.
+            if memory.start % Self::GRANULE != 0
+                || memory.end % Self::GRANULE != 0
+                || bytes.len() != memory.len() / Self::GRANULE
+            {
+                return None;
+            }
+            Some(Shadow { memory, bytes })
         }
     };
     ($($method:ident => $symbol:literal),+ $(,)?) => {
@@ -72,7 +101,10 @@ impl Platform for Ra8m2Granule8 {
     linker_bounds!();
 
     #[inline(always)]
-    fn to_shadow_ranges(addr: usize, size: usize) -> impl Iterator<Item = Shadow<Range<usize>>> {
+    fn to_writable_shadow_ranges(
+        addr: usize,
+        size: usize,
+    ) -> impl Iterator<Item = Shadow<Range<usize>>> {
         let last = size.checked_sub(1).and_then(|size| addr.checked_add(size));
         // Form each optional piece before chaining to keep the fixed region count
         // visible to the consumer, without iterating a region table.

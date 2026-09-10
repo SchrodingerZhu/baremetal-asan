@@ -16,7 +16,10 @@ impl<const SCALE: u32> Platform for Split<SCALE> {
     const SHADOW_SCALE: u32 = SCALE;
     const SHADOW_BASE: usize = 0;
 
-    fn to_shadow_ranges(addr: usize, size: usize) -> impl Iterator<Item = Shadow<Range<usize>>> {
+    fn to_writable_shadow_ranges(
+        addr: usize,
+        size: usize,
+    ) -> impl Iterator<Item = Shadow<Range<usize>>> {
         let last = size.checked_sub(1).and_then(|n| addr.checked_add(n));
         // Granule-aligned for both scales, but inside a 32-byte alloca redzone.
         map_region::<Self>(addr, last, 0x1000..0x1210, LEFT.0.get() as usize)

@@ -14,7 +14,7 @@ impl ShadowScan for &[i8] {
         #[cfg(all(feature = "mve", target_arch = "arm", target_os = "none"))]
         // MVE uses zero as its success sentinel and compares signed shadow bytes
         // against the granule size. Other layouts retain the scalar scan.
-        if P::APPLICATION.start != 0 && P::GRANULE < 128 && self.len() >= 16 && !mve::in_handler() {
+        if first != 0 && P::GRANULE < 128 && self.len() >= 16 && !mve::in_handler() {
             return mve::find_invalid_shadow_byte::<P>(self, first, last);
         }
 
@@ -90,7 +90,7 @@ mod mve {
         ipsr != 0
     }
 
-    /// Scan the shadow of a validated, nonempty application-SRAM range.
+    /// Scan the shadow of a validated, nonempty application range.
     /// Startup must enable MVE and set FPSCR.LEN to 0b100 (no tail-predicated loop).
     #[inline(never)]
     pub(super) fn find_invalid_shadow_byte<P: Platform>(

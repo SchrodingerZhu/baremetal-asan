@@ -101,7 +101,7 @@ clear retired dynamic-stack shadow on return or stack restore. These dynamic
 allocations stay on the real stack; they do not gain fake-stack after-return
 protection. All of these updates use the platform's physical shadow slices.
 
-For split shadow, override `Platform::to_shadow_ranges`; each returned `Shadow` describes
+For split RAM shadow, override `Platform::to_writable_shadow_ranges`; each returned `Shadow` describes
 an application range and its physical shadow range. `platform::map_region` handles
 clipping and granule rounding. The default platform implementation uses one linear
 shadow range. `to_shadow_slices` and `to_shadow_slices_mut` borrow those ranges without copying.
@@ -141,6 +141,15 @@ Automatic registration/unregistration and initialization-order hooks remain stub
 `__asan_init` is not implemented; startup must initialize shadow before allocation.
 See [spec.md](spec.md) for the API list.
 
+`Platform::rom_shadow()` optionally supplies a ROM application range and the
+physical range holding its precomputed shadow. `APPLICATION` continues to describe
+RAM. Read mappings (`to_shadow_ranges` / `to_shadow_slices`) include both regions
+in application-address order; `to_shadow_slices_mut` uses only writable RAM
+mapping. Stack, heap, and global poisoning therefore never borrow ROM shadow
+mutably. ROM placement is independent of RAM's logical shadow offset, and ordinary
+RAM checks do not resolve ROM bounds. See the [compiler/linker contract](../lld/docs/ELF/asan_shadow.md)
+for static shadow emission and placement.
+
 ```sh
 cargo build                      # Default workspace member: the portable library.
 cargo test --workspace
@@ -151,4 +160,5 @@ Release builds use `opt-level = "s"`, ThinLTO, and aborting panics. The consumin
 runtime supplies its own panic handler. Access diagnostics include an ANSI-colored
 shadow dump with the offending byte bracketed and a poison-value legend. Rows
 show application addresses and remain continuous across physical shadow regions;
-the dump is clipped to the platform's application bounds and uses its granule size.
+the dump is clipped to the containing RAM or ROM application range and uses its
+granule size.

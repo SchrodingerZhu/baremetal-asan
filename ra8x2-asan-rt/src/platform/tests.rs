@@ -1,6 +1,13 @@
 use super::*;
 
 #[test]
+fn absent_rom_linker_symbols_disable_static_shadow() {
+    assert!(Ra8m2Granule8::rom_shadow().is_none());
+    assert!(Ra8m2Granule16::rom_shadow().is_none());
+    assert!(Ra8m2Granule8Sram::rom_shadow().is_none());
+}
+
+#[test]
 fn granule_eight_splits_at_the_end_of_dtcm() {
     let mut parts = Ra8m2Granule8::to_shadow_ranges(0x2210_0000 - 4, 12);
     assert_eq!(

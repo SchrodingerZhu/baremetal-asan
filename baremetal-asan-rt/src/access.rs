@@ -9,11 +9,11 @@ mod scan;
 #[inline(always)]
 unsafe fn check_access<P: Platform, const SIZE: usize>(addr: usize, size: usize, is_write: bool) {
     if size != 0 && addr.checked_add(size - 1).is_none() {
-        // SAFETY: the caller supplies initialized, stable shadow RAM.
+        // SAFETY: the caller supplies initialized, stable shadow.
         unsafe { report_access::<P>(addr, size, is_write, addr) };
     }
-    // SAFETY: startup initializes the platform's shadow RAM. Shadow must remain
-    // unchanged while the check borrows it; each slice stays in one RAM region.
+    // SAFETY: RAM shadow is initialized at startup; ROM shadow is precomputed.
+    // Shadow remains unchanged while borrowed; each slice stays in one region.
     let invalid = unsafe { P::to_shadow_slices(addr, size) }.find_map(|part| {
         let first = part.memory.start;
         let last = part.memory.end - 1;
@@ -42,7 +42,7 @@ unsafe fn check_access<P: Platform, const SIZE: usize>(addr: usize, size: usize,
         }
     });
     if let Some(invalid) = invalid {
-        // SAFETY: the caller supplies initialized, stable shadow RAM.
+        // SAFETY: the caller supplies initialized, stable shadow.
         unsafe { report_access::<P>(addr, size, is_write, invalid) };
     }
 }
@@ -74,14 +74,14 @@ macro_rules! __asan_access_checkers {
     ($platform:ty; $($load:ident, $store:ident, $size:literal;)+) => {
         $(
             /// # Safety
-            /// The target must initialize shadow RAM and prevent conflicting access.
+            /// The target must provide initialized shadow and prevent conflicting access.
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn $load(addr: usize) {
                 unsafe { $crate::access::check_access_fixed::<$platform, $size>(addr, false) };
             }
 
             /// # Safety
-            /// The target must initialize shadow RAM and prevent conflicting access.
+            /// The target must provide initialized shadow and prevent conflicting access.
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn $store(addr: usize) {
                 unsafe { $crate::access::check_access_fixed::<$platform, $size>(addr, true) };
@@ -104,14 +104,14 @@ macro_rules! export_asan_access {
         }
 
         /// # Safety
-        /// The target must initialize shadow RAM and prevent conflicting access.
+        /// The target must provide initialized shadow and prevent conflicting access.
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn __asan_loadN(addr: usize, size: usize) {
             unsafe { $crate::access::check_range::<$platform>(addr, size, false) };
         }
 
         /// # Safety
-        /// The target must initialize shadow RAM and prevent conflicting access.
+        /// The target must provide initialized shadow and prevent conflicting access.
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn __asan_storeN(addr: usize, size: usize) {
             unsafe { $crate::access::check_range::<$platform>(addr, size, true) };

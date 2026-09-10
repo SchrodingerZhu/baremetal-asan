@@ -32,7 +32,7 @@ macro_rules! fixture {
                 fn alloc_size() -> usize {
                     ARENA_SIZE
                 }
-                fn to_shadow_ranges(
+                fn to_writable_shadow_ranges(
                     addr: usize,
                     size: usize,
                 ) -> impl Iterator<Item = Shadow<Range<usize>>> {

@@ -30,26 +30,32 @@ struct ShadowDump<P>(usize, PhantomData<P>);
 
 impl<P: Platform> fmt::Display for ShadowDump<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !P::APPLICATION.contains(&self.0) {
+        let memory = if P::APPLICATION.contains(&self.0) {
+            P::APPLICATION
+        } else if let Some(rom) = P::rom_shadow().filter(|rom| rom.memory.contains(&self.0)) {
+            rom.memory
+        } else {
             return Ok(());
-        }
+        };
 
         const COLUMNS: usize = 16;
-        let guilty = (self.0 - P::APPLICATION.start) / P::GRANULE;
+        let guilty = (self.0 - memory.start) / P::GRANULE;
         let center = guilty / COLUMNS * COLUMNS;
         let first = center.saturating_sub(5 * COLUMNS);
-        let end = center.saturating_add(6 * COLUMNS).min(P::SHADOW_SIZE);
+        let end = center
+            .saturating_add(6 * COLUMNS)
+            .min(memory.len() / P::GRANULE);
         writeln!(
             f,
             "Shadow bytes around the buggy address (application addresses):"
         )?;
         for row in (first..end).step_by(COLUMNS) {
-            let addr = P::APPLICATION.start + row * P::GRANULE;
+            let addr = memory.start + row * P::GRANULE;
             let count = COLUMNS.min(end - row);
             let prefix = if row == center { "=>" } else { "  " };
             write!(f, "{prefix}{addr:#010x}:")?;
             // SAFETY: construction guarantees readable, stable shadow. The
-            // window is clipped to APPLICATION; each slice stays in one region.
+            // window is clipped to this RAM or ROM application region.
             let pieces = unsafe { P::to_shadow_slices(addr, count * P::GRANULE) };
             for (column, &value) in pieces.flat_map(|part| part.bytes).enumerate() {
                 let byte = ShadowByte(value as u8);

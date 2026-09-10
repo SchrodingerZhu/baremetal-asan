@@ -89,3 +89,12 @@ fn unsupported_addresses_do_not_read_unmapped_shadow() {
         assert!(dump::<Granule8>(addr).is_empty());
     }
 }
+
+#[test]
+fn rom_dump_uses_rom_bounds_and_static_poison() {
+    use crate::test_platform::RomPlatform;
+    let text = dump::<RomPlatform<3, 0x800>>(0x810);
+    assert!(text.contains("=>0x00000800: 00 01 [\x1b[1;31mf9\x1b[0m]"));
+    assert!(!text.contains("0x00001000:"));
+    assert!(dump::<RomPlatform<3, 0x800>>(0x820).is_empty());
+}

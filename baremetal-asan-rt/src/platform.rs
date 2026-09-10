@@ -6,7 +6,7 @@
 //!   `(addr >> SHADOW_SCALE) + SHADOW_OFFSET`. It starts at `SHADOW_BASE` for
 //!   `APPLICATION.start` and advances by one per granule. This address need not
 //!   refer to accessible RAM; it identifies a byte in the logical shadow space.
-//! - **Physical shadow address**: the actual RAM address holding that shadow byte.
+//! - **Physical shadow address**: the RAM or ROM address holding that shadow byte.
 //!   The platform places consecutive logical shadow bytes in one or more backing
 //!   regions, which may be separated by address gaps.
 //!
@@ -34,6 +34,12 @@
 //! The default platform mapping makes logical and physical shadow addresses equal.
 //! When they differ, LLVM's shadow operations must be outlined so the runtime can
 //! perform the translation; a direct LLVM shadow access would bypass it.
+//!
+//! ROM globals use a separate, immutable mapping supplied by `rom_shadow()`:
+//! `rom_shadow_start + ((addr - rom_start) >> SHADOW_SCALE)`. The compiler and
+//! linker precompute those bytes; their physical placement is independent of
+//! RAM's logical shadow offset. Read slices include both mappings. Mutable
+//! slices include only the RAM ranges from `to_writable_shadow_ranges`.
 
 use core::{ops::Range, slice};
 
@@ -49,9 +55,11 @@ pub struct Shadow<T> {
 /// Runtime memory configuration and target hooks.
 ///
 /// Application and region bounds must be granule-aligned. Regions must cover the
-/// application range in order, without overlaps or holes. Each shadow range must be
-/// nonempty, disjoint from the others, and sized for its application region.
+/// RAM application range in order, without overlaps or holes. Optional ROM must
+/// be disjoint from application RAM. Each shadow range must be nonempty, disjoint
+/// from the others, and sized for its application region.
 pub trait Platform: Sized {
+    /// Application RAM, used for heap, stack, and mutable global shadow updates.
     const APPLICATION: Range<usize>;
     const SHADOW_SCALE: u32;
 
@@ -84,11 +92,45 @@ pub trait Platform: Sized {
         0
     }
 
+    /// ROM application bytes and their precomputed, immutable physical shadow.
+    /// Application bounds must be granule-aligned; the shadow length is the ROM
+    /// length divided by `GRANULE`. The default has no ROM mapping.
+    #[inline(always)]
+    fn rom_shadow() -> Option<Shadow<Range<usize>>> {
+        None
+    }
+
     /// Split an application access into ranges backed by individual shadow regions.
     /// Empty, wrapping, and unsupported ranges yield no pieces; overlaps are clipped.
-    /// The default maps to contiguous shadow starting at `SHADOW_BASE`.
+    /// Pieces are returned in application-address order, including ROM shadow.
     #[inline(always)]
     fn to_shadow_ranges(addr: usize, size: usize) -> impl Iterator<Item = Shadow<Range<usize>>> {
+        let last = size.checked_sub(1).and_then(|size| addr.checked_add(size));
+        // Ordinary RAM accesses need not resolve the optional ROM bounds.
+        let rom = last
+            .filter(|&last| addr < Self::APPLICATION.start || last >= Self::APPLICATION.end)
+            .and_then(|last| {
+                Self::rom_shadow().and_then(|rom| {
+                    map_region::<Self>(addr, Some(last), rom.memory, rom.bytes.start)
+                })
+            });
+        let (before, after) = match rom {
+            Some(rom) if rom.memory.start < Self::APPLICATION.start => (Some(rom), None),
+            rom => (None, rom),
+        };
+        before
+            .into_iter()
+            .chain(Self::to_writable_shadow_ranges(addr, size))
+            .chain(after)
+    }
+
+    /// Map application RAM to writable physical shadow, in application order.
+    /// Override this for split RAM shadow. ROM must never be included here.
+    #[inline(always)]
+    fn to_writable_shadow_ranges(
+        addr: usize,
+        size: usize,
+    ) -> impl Iterator<Item = Shadow<Range<usize>>> {
         let last = size.checked_sub(1).and_then(|size| addr.checked_add(size));
         map_region::<Self>(addr, last, Self::APPLICATION, Self::SHADOW_BASE).into_iter()
     }
@@ -96,7 +138,7 @@ pub trait Platform: Sized {
     /// Borrow shadow in region-sized pieces without copying bytes.
     ///
     /// # Safety
-    /// The platform must describe initialized, readable shadow RAM that remains
+    /// The platform must describe initialized, readable shadow that remains
     /// unmodified while any returned slice is borrowed.
     #[inline(always)]
     unsafe fn to_shadow_slices(
@@ -122,7 +164,7 @@ pub trait Platform: Sized {
         addr: usize,
         size: usize,
     ) -> impl Iterator<Item = Shadow<&'static mut [i8]>> {
-        Self::to_shadow_ranges(addr, size).map(|part| Shadow {
+        Self::to_writable_shadow_ranges(addr, size).map(|part| Shadow {
             memory: part.memory,
             // SAFETY: the caller guarantees exclusive access to disjoint regions.
             bytes: unsafe {
@@ -160,7 +202,7 @@ pub fn map_region<P: Platform>(
     shadow: usize,
 ) -> Option<Shadow<Range<usize>>> {
     let first = addr.max(memory.start);
-    let last = last?.min(memory.end - 1);
+    let last = last?.min(memory.end.checked_sub(1)?);
     (first <= last).then(|| Shadow {
         memory: first..last + 1,
         bytes: shadow + (first - memory.start) / P::GRANULE
