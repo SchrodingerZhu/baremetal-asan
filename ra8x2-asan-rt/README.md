@@ -17,6 +17,15 @@ allocations. Initialize all used shadow bytes before instrumented code runs.
 These standalone layouts do not sanitize application data in TCM, and firmware
 with other RAM reservations needs a matching platform and linker script.
 
+After clearing shadow, call `__asan_init_globals(__start_asan_globals,
+__stop_asan_globals)` before instrumented constructors. Keep the `asan_globals`
+descriptor section and define these exclusive bounds in the linker script. The
+runtime initializes SRAM payload shadow and poisons global redzones with `0xf9`,
+including partial final granules; descriptors for flash constants are skipped.
+A compiler built with the imported LLVM PR #212890 can emit this section with
+`-mllvm -asan-globals-metadata-section=asan_globals`. The normal ELF metadata
+section has the same ABI and also supports explicit startup initialization.
+
 Build the target archive (`target/thumbv8m.main-none-eabihf/release/libra8x2_asan_rt.a`):
 
 ```sh

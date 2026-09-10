@@ -114,7 +114,7 @@ scale and offset must match the platform.
 `export_asan_stack!`. When exporting heap and stack groups individually, pass the
 same `Heap<Platform>` static to `export_asan_heap!(Platform, HEAP)` and
 `export_asan_stack!(Platform, HEAP)`. Merely linking this library emits no ASan C
-symbols. Generic Rust helpers are available in `access`, `memory`, `heap`, and
+symbols. Generic Rust helpers are available in `access`, `global`, `memory`, `heap`, and
 `stack`; their unsafe contracts cover arena ownership, shadow, and memory validity.
 
 Fixed 1/2/4/8/16-byte checks borrow small shadow arrays and retain the expanded
@@ -122,7 +122,22 @@ scalar scans. Variable-size checks scan slices. The optional `mve` feature enabl
 the exact MVE slice scanner on bare-metal ARM; the consuming target must support
 MVE and enable it at startup. Handlers and short slices retain scalar checks.
 
-Global registration remains stubbed.
+After clearing shadow, startup calls `__asan_init_globals(start, end)` with the
+exclusive bounds of a contiguous `__asan_global` descriptor section. It makes
+SRAM global payloads accessible and poisons their right redzones with `0xf9`,
+including the valid prefix of a partial final granule. Descriptors outside
+`Platform::APPLICATION` (such as flash constants) are skipped. The Rust interface
+is `global::init::<Platform>(&[Global])`; `export_asan_globals!(Platform)` emits
+the C helper. Run this before instrumented constructors, with exclusive shadow
+access. Startup's existing initialization guard should also cover this call.
+
+The included [LLVM PR #212890](https://github.com/llvm/llvm-project/pull/212890)
+adds the compiler option
+`-mllvm -asan-globals-metadata-section=asan_globals`, emitting descriptors without
+automatic registration calls. The normal ELF `asan_globals` section also uses
+the same descriptor ABI and works with explicit startup initialization. Keep the
+metadata section in the linker script and supply its start/end symbols.
+Automatic registration/unregistration and initialization-order hooks remain stubbed.
 `__asan_init` is not implemented; startup must initialize shadow before allocation.
 See [spec.md](spec.md) for the API list.
 

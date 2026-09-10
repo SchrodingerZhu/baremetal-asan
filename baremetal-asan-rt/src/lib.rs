@@ -5,7 +5,7 @@
 mod abi;
 pub mod access;
 mod diagnostic;
-mod global;
+pub mod global;
 pub mod heap;
 pub mod memory;
 pub mod platform;
@@ -24,7 +24,7 @@ macro_rules! export_asan {
     ($platform:ty $(,)?) => {
         static __ASAN_HEAP: $crate::heap::Heap<$platform> = $crate::heap::Heap::new();
         $crate::export_asan_abi!();
-        $crate::export_asan_globals!();
+        $crate::export_asan_globals!($platform);
         $crate::export_asan_access!($platform);
         $crate::export_asan_memory!($platform);
         $crate::export_asan_heap!($platform, __ASAN_HEAP);

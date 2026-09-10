@@ -33,6 +33,7 @@ For Clang/LLVM on bare-metal Arm ELF. All groups assume `-fsanitize=address`; fl
 
 | Additional flag | Function(s) | Functionality |
 | --- | --- | --- |
+| `-mllvm -asan-globals-metadata-section=asan_globals` | `__asan_init_globals(start, end)` | Firmware startup helper: initialize SRAM global payload shadow and poison redzones from the descriptor section; skip globals outside application SRAM. |
 | `-fsanitize-address-globals-dead-stripping` | `__asan_register_elf_globals`, `__asan_unregister_elf_globals` | Register/unregister ELF section descriptors and poison/unpoison global redzones; prevent duplicate registration using the supplied flag. |
 | `-fno-sanitize-address-globals-dead-stripping` | `__asan_register_globals`, `__asan_unregister_globals` | Register/unregister an explicit descriptor array and poison/unpoison global redzones. |
 | `-mllvm -asan-initialization-order=1` (default) | `__asan_before_dynamic_init`, `__asan_after_dynamic_init` | Poison globals before dynamic initialization for initialization-order checks, then restore accessibility afterward. |
