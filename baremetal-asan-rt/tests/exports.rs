@@ -22,9 +22,13 @@ runtime::export_asan!(TestPlatform<3>);
 #[test]
 fn exports_use_the_custom_platform_stack_provider() {
     __asan_version_mismatch_check_v8();
-    assert_eq!(__asan_stack_malloc_0(16), 0);
-    assert_eq!(__asan_stack_malloc_always_10(65536), 0);
-    __asan_stack_free_10(0, 0);
+    unsafe {
+        assert_eq!(__asan_stack_malloc_0(16), 0);
+        assert_eq!(__asan_stack_malloc_always_10(65536), 0);
+        __asan_stack_free_10(0, 0);
+        assert!(__asan_malloc(16).is_null());
+        __asan_free(core::ptr::null_mut());
+    }
     let mut flag = 42;
     __asan_register_elf_globals(&mut flag, core::ptr::null_mut(), core::ptr::null_mut());
     assert_eq!(flag, 42);
@@ -42,7 +46,7 @@ fn exports_use_the_custom_platform_stack_provider() {
             core::ptr::read(core::ptr::addr_of!(
                 __asan_option_detect_stack_use_after_return
             )),
-            0
+            1
         );
     }
 }

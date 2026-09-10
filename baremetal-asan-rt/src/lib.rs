@@ -22,10 +22,12 @@ mod test_platform;
 #[macro_export]
 macro_rules! export_asan {
     ($platform:ty $(,)?) => {
+        static __ASAN_HEAP: $crate::heap::Heap<$platform> = $crate::heap::Heap::new();
         $crate::export_asan_abi!();
         $crate::export_asan_globals!();
         $crate::export_asan_access!($platform);
         $crate::export_asan_memory!($platform);
-        $crate::export_asan_stack!($platform);
+        $crate::export_asan_heap!($platform, __ASAN_HEAP);
+        $crate::export_asan_stack!($platform, __ASAN_HEAP);
     };
 }

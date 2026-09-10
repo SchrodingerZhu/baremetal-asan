@@ -42,7 +42,7 @@ physical slices above. Compile instrumented application code with:
 
 ```sh
 -fsanitize=address -fsanitize-address-outline-instrumentation \
--fsanitize-address-use-after-return=never \
+-fsanitize-address-use-after-return=runtime \
 -mllvm -asan-max-inline-poisoning-size=0
 ```
 
@@ -53,6 +53,10 @@ Also supply the mapping options matching the runtime:
 | Default | `3` | `0x1bc00000` |
 | `granule-16` | `4` | `0x1de00000` |
 | `no-dtcm` | `3` | `0x1dd70000` |
+
+Fake-stack detection defaults to enabled when an arena is available. `always`
+also works; `never` keeps the real stack. Keep the poisoning threshold at zero
+so small fake frames are returned through `__asan_stack_free_*` calls.
 
 Inline shadow accesses bypass translation and cannot be used with the split
 platform. LLVM has no outlined setters for partial-shadow values 8–15: at scale 4,
@@ -77,8 +81,10 @@ ASSERT(__asan_alloc_base <= __stack - 16K, "allocation arena overlaps stack")
 
 The linker must keep other sections out of this arena. `baremetal_asan_rt::heap::Heap`
 uses it for LLVM libc's allocator state and allocation storage. This target
-supplies the Cortex-M single-core critical-section backend. Heap redzones/shadow
-poisoning and fake-stack allocation are not implemented yet.
+supplies the Cortex-M single-core critical-section backend. `__asan_malloc`,
+`__asan_free`, and fake-stack calls share one heap, initialize it lazily, and
+manage their shadow under the same mutex. Startup must initialize shadow first.
+Frames bypassed by nonlocal returns are not reclaimed yet.
 
 ```sh
 cargo test --workspace

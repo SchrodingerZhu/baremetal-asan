@@ -3,6 +3,8 @@
 use crate::platform::Platform;
 use core::ptr;
 
+pub mod fake_stack;
+
 /// Clear stack shadow through `Platform::stack_top()`; zero disables cleanup.
 ///
 /// # Safety
@@ -31,21 +33,34 @@ pub unsafe fn handle_no_return<P: Platform>() {
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __asan_fake_stack_stubs {
-    ($($malloc:ident, $malloc_always:ident, $free:ident;)+) => {
+macro_rules! __asan_fake_stack_exports {
+    ($platform:ty, $heap:ident; $($malloc:ident, $malloc_always:ident, $free:ident, $class:literal;)+) => {
         $(
+            /// # Safety
+            /// The platform's arena and initialized shadow must be reserved.
             #[unsafe(no_mangle)]
-            pub extern "C" fn $malloc(_size: usize) -> usize {
-                0
+            pub unsafe extern "C" fn $malloc(size: usize) -> usize {
+                if unsafe { ::core::ptr::read_volatile(::core::ptr::addr_of!(
+                    __asan_option_detect_stack_use_after_return
+                )) } == 0 {
+                    return 0;
+                }
+                unsafe { $crate::stack::fake_stack::allocate::<$platform, $class>(&$heap, size) }
             }
 
+            /// # Safety
+            /// The platform's arena and initialized shadow must be reserved.
             #[unsafe(no_mangle)]
-            pub extern "C" fn $malloc_always(_size: usize) -> usize {
-                0
+            pub unsafe extern "C" fn $malloc_always(size: usize) -> usize {
+                unsafe { $crate::stack::fake_stack::allocate::<$platform, $class>(&$heap, size) }
             }
 
+            /// # Safety
+            /// `addr` must be zero or this heap's live frame of the named class.
             #[unsafe(no_mangle)]
-            pub extern "C" fn $free(_addr: usize, _size: usize) {}
+            pub unsafe extern "C" fn $free(addr: usize, _size: usize) {
+                unsafe { $crate::stack::fake_stack::deallocate::<$platform, $class>(&$heap, addr) };
+            }
         )+
     };
 }
@@ -70,26 +85,33 @@ macro_rules! __asan_shadow_setters {
     };
 }
 
-/// Export stack setters, no-return cleanup, and the current fake-stack stubs.
+/// Export stack setters, no-return cleanup, and heap-backed fake-stack frames.
+/// Supply the same heap static as `export_asan_heap!` when exporting both groups.
 #[macro_export]
 macro_rules! export_asan_stack {
     ($platform:ty $(,)?) => {
-        /// Runtime-selectable stack-use-after-return detection is disabled.
+        static __ASAN_STACK_HEAP: $crate::heap::Heap<$platform> = $crate::heap::Heap::new();
+        $crate::export_asan_stack!($platform, __ASAN_STACK_HEAP);
+    };
+    ($platform:ty, $heap:ident $(,)?) => {
+        /// Runtime-selectable stack-use-after-return detection is enabled.
+        /// Change only when no instrumented execution can read this flag.
         #[unsafe(no_mangle)]
-        pub static mut __asan_option_detect_stack_use_after_return: ::core::ffi::c_int = 0;
+        pub static mut __asan_option_detect_stack_use_after_return: ::core::ffi::c_int = 1;
 
-        $crate::__asan_fake_stack_stubs! {
-            __asan_stack_malloc_0, __asan_stack_malloc_always_0, __asan_stack_free_0;
-            __asan_stack_malloc_1, __asan_stack_malloc_always_1, __asan_stack_free_1;
-            __asan_stack_malloc_2, __asan_stack_malloc_always_2, __asan_stack_free_2;
-            __asan_stack_malloc_3, __asan_stack_malloc_always_3, __asan_stack_free_3;
-            __asan_stack_malloc_4, __asan_stack_malloc_always_4, __asan_stack_free_4;
-            __asan_stack_malloc_5, __asan_stack_malloc_always_5, __asan_stack_free_5;
-            __asan_stack_malloc_6, __asan_stack_malloc_always_6, __asan_stack_free_6;
-            __asan_stack_malloc_7, __asan_stack_malloc_always_7, __asan_stack_free_7;
-            __asan_stack_malloc_8, __asan_stack_malloc_always_8, __asan_stack_free_8;
-            __asan_stack_malloc_9, __asan_stack_malloc_always_9, __asan_stack_free_9;
-            __asan_stack_malloc_10, __asan_stack_malloc_always_10, __asan_stack_free_10;
+        $crate::__asan_fake_stack_exports! {
+            $platform, $heap;
+            __asan_stack_malloc_0, __asan_stack_malloc_always_0, __asan_stack_free_0, 0;
+            __asan_stack_malloc_1, __asan_stack_malloc_always_1, __asan_stack_free_1, 1;
+            __asan_stack_malloc_2, __asan_stack_malloc_always_2, __asan_stack_free_2, 2;
+            __asan_stack_malloc_3, __asan_stack_malloc_always_3, __asan_stack_free_3, 3;
+            __asan_stack_malloc_4, __asan_stack_malloc_always_4, __asan_stack_free_4, 4;
+            __asan_stack_malloc_5, __asan_stack_malloc_always_5, __asan_stack_free_5, 5;
+            __asan_stack_malloc_6, __asan_stack_malloc_always_6, __asan_stack_free_6, 6;
+            __asan_stack_malloc_7, __asan_stack_malloc_always_7, __asan_stack_free_7, 7;
+            __asan_stack_malloc_8, __asan_stack_malloc_always_8, __asan_stack_free_8, 8;
+            __asan_stack_malloc_9, __asan_stack_malloc_always_9, __asan_stack_free_9, 9;
+            __asan_stack_malloc_10, __asan_stack_malloc_always_10, __asan_stack_free_10, 10;
         }
 
         $crate::__asan_shadow_setters! {

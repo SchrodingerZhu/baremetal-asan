@@ -13,6 +13,13 @@ For Clang/LLVM on bare-metal Arm ELF. All groups assume `-fsanitize=address`; fl
 | `__asan_memset` | Check the destination range, fill it with a byte value, and return the destination. |
 | `__asan_handle_no_return` | Clear stack poisoning before a non-returning call; may be emitted even with stack instrumentation disabled. |
 
+## Explicit heap allocation
+
+| Function(s) | Functionality |
+| --- | --- |
+| `__asan_malloc` | Allocate with poisoned redzones and exact payload shadow using the rotational heap; return null on failure. |
+| `__asan_free` | Poison a live allocation and return it to the heap's existing quarantine; accept null. |
+
 ## Outlined checks — `-fsanitize-address-outline-instrumentation`
 
 | Function(s) | Functionality |
@@ -37,9 +44,9 @@ For Clang/LLVM on bare-metal Arm ELF. All groups assume `-fsanitize=address`; fl
 | `-mllvm -asan-max-inline-poisoning-size=N` (default: 64) | `__asan_set_shadow_{00,01,02,03,04,05,06,07,f1,f2,f3,f5,f8}` | Fill shadow bytes with the hexadecimal suffix value when an update exceeds the inline threshold. |
 | `-fsanitize-address-use-after-scope` | `__asan_poison_stack_memory`, `__asan_unpoison_stack_memory` | Mark local-variable ranges inaccessible/accessible at lifetime boundaries, when helper calls are emitted. |
 | `-mllvm -asan-instrument-dynamic-allocas=1` (default) | `__asan_alloca_poison`, `__asan_allocas_unpoison` | Poison dynamic stack-allocation redzones, then clear stack-range poisoning during cleanup. |
-| `-fsanitize-address-use-after-return=runtime` | `__asan_stack_malloc_{0..10}` | Allocate a fake-stack frame by size class when runtime detection is enabled; return zero when unavailable. |
+| `-fsanitize-address-use-after-return=runtime` | `__asan_stack_malloc_{0..10}` | Allocate a 64-byte through 64-KiB frame directly from the rotational heap when detection is enabled; return zero when unavailable. |
 | `-fsanitize-address-use-after-return=always` | `__asan_stack_malloc_always_{0..10}` | Allocate a fake-stack frame without consulting the runtime enable flag; return zero when unavailable. |
-| `-fsanitize-address-use-after-return={runtime,always}` | `__asan_stack_free_{0..10}` | Retire a fake-stack frame and maintain after-return poisoning when cleanup uses a helper call. |
+| `-fsanitize-address-use-after-return={runtime,always}` and `-mllvm -asan-max-inline-poisoning-size=0` | `__asan_stack_free_{0..10}` | Poison a returned frame with `0xf5` and release it into the heap's existing quarantine. |
 
 ## Inline checks — `-mllvm -asan-instrumentation-with-call-threshold=-1`
 
